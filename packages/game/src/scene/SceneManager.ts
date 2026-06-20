@@ -19,6 +19,9 @@ import { saveManager } from '../save/SaveManager';
 import type { GameState, PartyMemberState } from '../save/types';
 import { ECONOMY } from '../data/economy';
 import { CHARACTER_MAP } from '../data/characters';
+import { NPCS } from '../data/npcs';
+import type { NpcAppearance } from '../data/npcs';
+import { MONSTER_MAP } from '../data/monsters';
 import { statsAtLevel } from '../data/stats';
 import { ITEM_MAP } from '../data/items';
 import { addStats } from '../data/stats';
@@ -269,133 +272,215 @@ export class SceneManager {
     bus.emit('scene:change', { from: '', to: mapId });
   }
 
-  /** 渲染地图瓦片 */
+  /** 渲染地图瓦片 —— 真实风格多层渲染 */
   private renderMap(mapDef: MapDef): void {
     const g = new Graphics();
     const ts = mapDef.tileSize;
+
+    // 先画整体背景色
+    g.rect(0, 0, mapDef.width * ts, mapDef.height * ts).fill(mapDef.bgColor);
 
     for (let y = 0; y < mapDef.height; y++) {
       for (let x = 0; x < mapDef.width; x++) {
         const tile = mapDef.tiles[y][x];
         const px = x * ts;
         const py = y * ts;
-        // 确定性纹理变化
         const v = tileVariation(x, y);
-        const brightness = 0.9 + (v / 255) * 0.2; // 0.9 ~ 1.1
+        const brightness = 0.88 + (v / 255) * 0.24;
         const baseColor = TILE_COLORS[tile] ?? 0x3a3a4a;
 
         switch (tile) {
-          case 0: {
-            // 空地（石板地）：带细微裂纹
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
-            if (v % 3 === 0) {
-              g.moveTo(px + ts * 0.2, py + ts * 0.3).lineTo(px + ts * 0.5, py + ts * 0.6)
-                .stroke({ width: 1, color: 0x2a2a3a, alpha: 0.3 });
-            }
-            break;
-          }
-          case 1: {
-            // 墙：高度感（底部暗、顶部亮、边框）
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness * 0.7) });
-            g.rect(px, py, ts, ts * 0.35).fill({ color: adjustBrightness(baseColor, brightness * 1.15) });
-            g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x1a1a2a });
-            // 顶部高光
-            g.rect(px, py, ts, 2).fill({ color: 0x4a4a5a, alpha: 0.6 });
-            break;
-          }
-          case 2: {
-            // 草地：带草叶纹理
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
-            const bladeColor = adjustBrightness(baseColor, brightness * 1.3);
-            if (v % 2 === 0) {
-              g.moveTo(px + ts * 0.3, py + ts * 0.7).lineTo(px + ts * 0.35, py + ts * 0.5)
-                .stroke({ width: 1, color: bladeColor });
-            }
-            if (v % 3 === 1) {
-              g.moveTo(px + ts * 0.6, py + ts * 0.8).lineTo(px + ts * 0.65, py + ts * 0.6)
-                .stroke({ width: 1, color: bladeColor });
-            }
-            break;
-          }
-          case 3: {
-            // 水：深蓝底 + 浅色波纹高光
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
-            const highlight = adjustBrightness(baseColor, brightness * 1.4);
-            g.ellipse(px + ts * 0.3, py + ts * 0.4, ts * 0.15, ts * 0.06).fill({ color: highlight, alpha: 0.5 });
-            if (v % 2 === 0) {
-              g.ellipse(px + ts * 0.7, py + ts * 0.7, ts * 0.12, ts * 0.05).fill({ color: highlight, alpha: 0.4 });
-            }
-            break;
-          }
-          case 4: {
-            // 树：地面 + 棕色树干 + 绿色树冠
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(0x2a4a2a, brightness) });
-            // 树干
-            g.rect(px + ts * 0.42, py + ts * 0.45, ts * 0.16, ts * 0.45).fill({ color: 0x6b4226 });
-            g.rect(px + ts * 0.42, py + ts * 0.45, ts * 0.16, ts * 0.45).stroke({ width: 1, color: 0x3a2210, alpha: 0.6 });
-            // 树冠（多层圆模拟立体感）
-            const canopyColor = adjustBrightness(0x2d5a1f, brightness);
-            g.circle(px + ts * 0.5, py + ts * 0.35, ts * 0.38).fill({ color: canopyColor });
-            g.circle(px + ts * 0.5, py + ts * 0.35, ts * 0.38).stroke({ width: 1, color: 0x1a3a0f, alpha: 0.7 });
-            // 树冠高光
-            g.circle(px + ts * 0.4, py + ts * 0.25, ts * 0.12).fill({ color: adjustBrightness(canopyColor, 1.2), alpha: 0.6 });
-            break;
-          }
-          case 5: {
-            // 道路：略带边框的石路
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
-            g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x4a4a3a, alpha: 0.4 });
-            break;
-          }
-          case 6: {
-            // 桥：木板 + 横向板缝
-            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
-            g.moveTo(px, py + ts * 0.33).lineTo(px + ts, py + ts * 0.33)
-              .stroke({ width: 1, color: 0x6a5a3a, alpha: 0.7 });
-            g.moveTo(px, py + ts * 0.66).lineTo(px + ts, py + ts * 0.66)
-              .stroke({ width: 1, color: 0x6a5a3a, alpha: 0.7 });
-            g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x5a4a2a, alpha: 0.5 });
-            break;
-          }
-          default: {
+          case 0: this.drawFloor(g, px, py, ts, v, brightness, baseColor); break;
+          case 1: this.drawWall(g, px, py, ts, v, brightness, baseColor); break;
+          case 2: this.drawGrass(g, px, py, ts, v, brightness, baseColor); break;
+          case 3: this.drawWater(g, px, py, ts, v, brightness, baseColor); break;
+          case 4: this.drawTree(g, px, py, ts, v, brightness); break;
+          case 5: this.drawPath(g, px, py, ts, v, brightness, baseColor); break;
+          case 6: this.drawBridge(g, px, py, ts, v, brightness, baseColor); break;
+          default:
             g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
             break;
-          }
         }
       }
     }
 
-    // 出口标记 —— 多层光晕传送门
+    // 出口传送门 —— 螺旋光晕
     for (const exit of mapDef.exits) {
       const cx = exit.x * ts + ts / 2;
       const cy = exit.y * ts + ts / 2;
       const portalColor = exit.locked ? 0xff3333 : 0x33ff66;
-      // 外层光晕
-      g.circle(cx, cy, ts * 0.7).fill({ color: portalColor, alpha: 0.1 });
-      g.circle(cx, cy, ts * 0.55).fill({ color: portalColor, alpha: 0.2 });
-      g.circle(cx, cy, ts * 0.4).fill({ color: portalColor, alpha: 0.35 });
-      g.circle(cx, cy, ts * 0.25).fill({ color: portalColor, alpha: 0.55 });
-      // 中心亮点
-      g.circle(cx, cy, ts * 0.1).fill({ color: 0xffffff, alpha: 0.85 });
-      // 锁定标记
-      if (exit.locked) {
-        g.rect(cx - 2, cy - ts * 0.2, 4, ts * 0.3).fill({ color: 0x000000, alpha: 0.6 });
-        g.circle(cx, cy - ts * 0.2, 4).fill({ color: 0x000000, alpha: 0.6 });
+      // 多层光晕
+      for (let i = 5; i >= 1; i--) {
+        g.circle(cx, cy, ts * 0.15 * i).fill({ color: portalColor, alpha: 0.08 * i });
       }
-    }
-
-    // 极淡网格线（alpha 0.05）
-    for (let x = 0; x <= mapDef.width; x++) {
-      g.moveTo(x * ts, 0).lineTo(x * ts, mapDef.height * ts)
-        .stroke({ width: 1, color: 0xffffff, alpha: 0.05 });
-    }
-    for (let y = 0; y <= mapDef.height; y++) {
-      g.moveTo(0, y * ts).lineTo(mapDef.width * ts, y * ts)
-        .stroke({ width: 1, color: 0xffffff, alpha: 0.05 });
+      g.circle(cx, cy, ts * 0.12).fill({ color: 0xffffff, alpha: 0.9 });
+      // 粒子点
+      for (let i = 0; i < 6; i++) {
+        const seed = tileVariation(exit.x * 7 + i, exit.y * 11 + i);
+        const a = (seed / 255) * Math.PI * 2;
+        const r = ts * 0.5 + (seed / 255) * ts * 0.2;
+        g.circle(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 2).fill({ color: portalColor, alpha: 0.6 });
+      }
+      if (exit.locked) {
+        // 锁图标
+        g.roundRect(cx - 5, cy - 4, 10, 8, 2).fill({ color: 0x000000, alpha: 0.7 });
+        g.circle(cx, cy - 4, 4).fill({ color: 0x000000, alpha: 0.0 });
+        g.arc(cx, cy - 5, 4, Math.PI, 0).stroke({ width: 1.5, color: 0x000000, alpha: 0.7 });
+      }
     }
 
     this.api.world.addChild(g);
     this.mapGraphics = g;
+  }
+
+  /** 石板地 */
+  private drawFloor(g: Graphics, px: number, py: number, ts: number, v: number, br: number, base: number): void {
+    g.rect(px, py, ts, ts).fill({ color: adjustBrightness(base, br) });
+    // 石板缝隙
+    g.rect(px, py, ts, 1).fill({ color: 0x1a1a24, alpha: 0.4 });
+    g.rect(px, py, 1, ts).fill({ color: 0x1a1a24, alpha: 0.4 });
+    // 随机小石子
+    if (v % 4 === 0) g.circle(px + ts * 0.3 + (v % 7), py + ts * 0.5, 1).fill({ color: 0x555566, alpha: 0.5 });
+    if (v % 5 === 2) g.circle(px + ts * 0.7, py + ts * 0.3 + (v % 6), 1).fill({ color: 0x555566, alpha: 0.4 });
+    // 裂纹
+    if (v % 7 === 0) {
+      g.moveTo(px + ts * 0.2, py + ts * 0.3).lineTo(px + ts * 0.5, py + ts * 0.6).lineTo(px + ts * 0.7, py + ts * 0.4)
+        .stroke({ width: 0.5, color: 0x222230, alpha: 0.4 });
+    }
+  }
+
+  /** 城墙/建筑 —— 3D 立体方块 */
+  private drawWall(g: Graphics, px: number, py: number, ts: number, v: number, br: number, base: number): void {
+    // 前面（主色，底部偏暗）
+    g.rect(px, py + ts * 0.2, ts, ts * 0.8).fill({ color: adjustBrightness(base, br * 0.65) });
+    // 顶面（亮色，模拟光照）
+    g.rect(px, py, ts, ts * 0.25).fill({ color: adjustBrightness(base, br * 1.2) });
+    // 顶面高光
+    g.rect(px, py, ts, 2).fill({ color: adjustBrightness(base, br * 1.4), alpha: 0.7 });
+    // 砖块纹路
+    g.rect(px, py + ts * 0.35, ts, 1).fill({ color: 0x1a1a2a, alpha: 0.5 });
+    g.rect(px, py + ts * 0.6, ts, 1).fill({ color: 0x1a1a2a, alpha: 0.5 });
+    // 竖向砖缝（错位）
+    const offset = (v % 2) * (ts * 0.5);
+    g.rect(px + offset, py + ts * 0.2, 1, ts * 0.4).fill({ color: 0x1a1a2a, alpha: 0.4 });
+    g.rect(px + (offset === 0 ? ts * 0.5 : 0), py + ts * 0.6, 1, ts * 0.4).fill({ color: 0x1a1a2a, alpha: 0.4 });
+    // 边框
+    g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x0a0a14 });
+  }
+
+  /** 草地 —— 草叶+花朵 */
+  private drawGrass(g: Graphics, px: number, py: number, ts: number, v: number, br: number, base: number): void {
+    g.rect(px, py, ts, ts).fill({ color: adjustBrightness(base, br) });
+    // 草叶（4 根，用 v 做确定性偏移）
+    const bladeColors = [adjustBrightness(base, br * 1.3), adjustBrightness(base, br * 1.15), adjustBrightness(base, br * 0.85)];
+    const positions = [
+      [0.2, 0.3], [0.5, 0.6], [0.75, 0.25], [0.35, 0.75],
+    ];
+    for (let i = 0; i < 4; i++) {
+      const bx = px + ts * positions[i][0];
+      const by = py + ts * positions[i][1];
+      const bh = 3 + (v % 4);
+      g.moveTo(bx, by + bh).lineTo(bx + 1, by).stroke({ width: 1, color: bladeColors[i % 3] });
+    }
+    // 小花朵
+    if (v % 13 === 0) {
+      const flowerColors = [0xffee44, 0xffaaaa, 0xffeeff, 0xff8844];
+      g.circle(px + ts * 0.4, py + ts * 0.5, 1.5).fill({ color: flowerColors[v % 4] });
+    }
+    if (v % 17 === 3) {
+      g.circle(px + ts * 0.7, py + ts * 0.3, 1.5).fill({ color: 0xffee44 });
+    }
+  }
+
+  /** 水域 —— 波纹+倒影 */
+  private drawWater(g: Graphics, px: number, py: number, ts: number, v: number, br: number, base: number): void {
+    g.rect(px, py, ts, ts).fill({ color: adjustBrightness(base, br * 0.8) });
+    // 深水渐变（底部更深）
+    g.rect(px, py + ts * 0.6, ts, ts * 0.4).fill({ color: adjustBrightness(base, br * 0.5), alpha: 0.4 });
+    // 波纹椭圆
+    const hl = adjustBrightness(base, br * 1.5);
+    g.ellipse(px + ts * 0.3, py + ts * 0.35, ts * 0.18, ts * 0.05).fill({ color: hl, alpha: 0.45 });
+    g.ellipse(px + ts * 0.7, py + ts * 0.65, ts * 0.14, ts * 0.04).fill({ color: hl, alpha: 0.35 });
+    if (v % 2 === 0) {
+      g.ellipse(px + ts * 0.5, py + ts * 0.5, ts * 0.1, ts * 0.03).fill({ color: 0xffffff, alpha: 0.25 });
+    }
+    // 荷叶（偶尔）
+    if (v % 23 === 0) {
+      g.circle(px + ts * 0.3, py + ts * 0.4, ts * 0.12).fill({ color: 0x2d6a2d, alpha: 0.7 });
+      g.circle(px + ts * 0.3, py + ts * 0.4, ts * 0.06).fill({ color: 0x4a8a4a, alpha: 0.5 });
+    }
+  }
+
+  /** 树木 —— 树干+多层树冠 */
+  private drawTree(g: Graphics, px: number, py: number, ts: number, v: number, br: number): void {
+    // 地面
+    g.rect(px, py, ts, ts).fill({ color: adjustBrightness(0x3a5a2a, br) });
+    // 树干
+    const trunkW = ts * 0.14;
+    const trunkH = ts * 0.5;
+    const trunkX = px + ts * 0.43;
+    const trunkY = py + ts * 0.4;
+    g.rect(trunkX, trunkY, trunkW, trunkH).fill({ color: adjustBrightness(0x6b4226, br) });
+    // 树皮纹理
+    g.rect(trunkX + trunkW * 0.3, trunkY, 1, trunkH).fill({ color: 0x4a2a16, alpha: 0.5 });
+    g.rect(trunkX + trunkW * 0.6, trunkY, 1, trunkH * 0.7).fill({ color: 0x4a2a16, alpha: 0.4 });
+    // 树冠（3-4 层重叠圆）
+    const cx = px + ts * 0.5;
+    const cy = py + ts * 0.3;
+    const r = ts * 0.36;
+    const c1 = adjustBrightness(0x1d4a0f, br);
+    const c2 = adjustBrightness(0x2d6a1f, br);
+    const c3 = adjustBrightness(0x3d8a2f, br);
+    // 底层（暗）
+    g.circle(cx, cy + 2, r).fill({ color: c1 });
+    g.circle(cx, cy + 2, r).stroke({ width: 1, color: 0x0a2a05, alpha: 0.6 });
+    // 中层
+    g.circle(cx - 2, cy, r * 0.85).fill({ color: c2 });
+    // 高光层
+    g.circle(cx - 4, cy - 3, r * 0.5).fill({ color: c3, alpha: 0.7 });
+    g.circle(cx - 6, cy - 5, r * 0.2).fill({ color: adjustBrightness(c3, 1.3), alpha: 0.5 });
+    // 小枝
+    if (v % 3 === 0) {
+      g.moveTo(cx + r * 0.5, cy).lineTo(cx + r * 0.8, cy + 4).stroke({ width: 1, color: 0x4a2a16 });
+    }
+  }
+
+  /** 道路 —— 泥土+石子 */
+  private drawPath(g: Graphics, px: number, py: number, ts: number, v: number, br: number, base: number): void {
+    g.rect(px, py, ts, ts).fill({ color: adjustBrightness(base, br) });
+    // 边缘提亮
+    g.rect(px, py, ts, 1).fill({ color: adjustBrightness(base, br * 1.2), alpha: 0.4 });
+    // 石子
+    if (v % 3 === 0) g.circle(px + ts * 0.25, py + ts * 0.4, 1).fill({ color: 0x6a6a5a, alpha: 0.5 });
+    if (v % 4 === 1) g.circle(px + ts * 0.7, py + ts * 0.6, 1).fill({ color: 0x6a6a5a, alpha: 0.4 });
+    // 脚印
+    if (v % 11 === 0) {
+      g.ellipse(px + ts * 0.3, py + ts * 0.5, 2, 1).fill({ color: 0x4a4a3a, alpha: 0.3 });
+      g.ellipse(px + ts * 0.5, py + ts * 0.6, 2, 1).fill({ color: 0x4a4a3a, alpha: 0.3 });
+    }
+  }
+
+  /** 桥 —— 木板+纹理 */
+  private drawBridge(g: Graphics, px: number, py: number, ts: number, v: number, br: number, base: number): void {
+    g.rect(px, py, ts, ts).fill({ color: adjustBrightness(base, br) });
+    // 3 块木板
+    const plankH = ts / 3;
+    for (let i = 0; i < 3; i++) {
+      const py2 = py + i * plankH;
+      g.rect(px, py2, ts, plankH - 1).fill({ color: adjustBrightness(base, br * (0.9 + i * 0.05)) });
+      // 木纹
+      g.moveTo(px + 2, py2 + plankH * 0.5).lineTo(px + ts - 2, py2 + plankH * 0.5)
+        .stroke({ width: 0.5, color: 0x5a3a1a, alpha: 0.4 });
+      // 板缝
+      g.rect(px, py2 + plankH - 1, ts, 1).fill({ color: 0x3a2a0a, alpha: 0.6 });
+    }
+    // 钉子
+    g.circle(px + 3, py + 3, 1).fill({ color: 0x4a3a2a });
+    g.circle(px + ts - 3, py + 3, 1).fill({ color: 0x4a3a2a });
+    g.circle(px + 3, py + ts - 3, 1).fill({ color: 0x4a3a2a });
+    g.circle(px + ts - 3, py + ts - 3, 1).fill({ color: 0x4a3a2a });
+    // 边框
+    g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x4a3a1a, alpha: 0.5 });
   }
 
   /** 清除地图图形 */
@@ -426,9 +511,8 @@ export class SceneManager {
     const container = new Container();
     const size = entity.sprite.size;
     const elementColor = ELEMENT_COLOR[entity.element] ?? 0xffffff;
-    const skinColor = 0xffdab9; // 肤色
 
-    // === 阴影 ===
+    // === 阴影（脚下椭圆） ===
     const shadowG = new Graphics();
     shadowG.ellipse(0, size * 0.4, size * 0.5, size * 0.18).fill({ color: 0x000000, alpha: 0.35 });
     container.addChild(shadowG);
@@ -437,58 +521,38 @@ export class SceneManager {
     const bodyG = new Graphics();
 
     if (entity.type === 'player' || entity.type === 'teammate') {
-      // 角色：身体 + 头 + 头发 + 武器 + 眼睛
-      const bodyColor = entity.sprite.color;
-      // 身体（圆角矩形）
-      bodyG.roundRect(-size * 0.3, -size * 0.1, size * 0.6, size * 0.5, 4).fill(bodyColor);
-      bodyG.roundRect(-size * 0.3, -size * 0.1, size * 0.6, size * 0.5, 4).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
-      // 头部
-      bodyG.circle(0, -size * 0.3, size * 0.22).fill(skinColor);
-      bodyG.circle(0, -size * 0.3, size * 0.22).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
-      // 头发（元素色）
-      bodyG.circle(0, -size * 0.38, size * 0.14).fill(elementColor);
-      // 武器（元素色发光长条）
-      bodyG.rect(size * 0.3, -size * 0.2, 3, size * 0.4).fill(elementColor);
-      bodyG.rect(size * 0.3, -size * 0.2, 3, size * 0.4).stroke({ width: 1, color: 0xffffff, alpha: 0.5 });
-      // 眼睛
-      bodyG.circle(-size * 0.07, -size * 0.3, 1.5).fill(0x000000);
-      bodyG.circle(size * 0.07, -size * 0.3, 1.5).fill(0x000000);
-    } else if (entity.type === 'monster') {
-      // 怪物：身体 + 眼睛 + 嘴
-      const bodyColor = entity.sprite.color;
-      // 身体（圆形）
-      bodyG.circle(0, 0, size * 0.4).fill(bodyColor);
-      bodyG.circle(0, 0, size * 0.4).stroke({ width: 2, color: 0x000000, alpha: 0.5 });
-      // 眼白
-      bodyG.circle(-size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
-      bodyG.circle(size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
-      // 瞳孔（元素色）
-      bodyG.circle(-size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
-      bodyG.circle(size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
-      // 嘴/獠牙
-      bodyG.moveTo(-size * 0.1, size * 0.12).lineTo(0, size * 0.22).lineTo(size * 0.1, size * 0.12)
-        .stroke({ width: 1, color: 0x000000 });
+      // 玩家/队友：从角色定义读取外观配置
+      const charDef = entity.characterId ? CHARACTER_MAP[entity.characterId] : undefined;
+      const appearance: NpcAppearance = charDef?.appearance ?? {
+        bodyColor: entity.sprite.color,
+        skinColor: 0xffdab9,
+        hairColor: elementColor,
+        hairStyle: 'short',
+        accessory: 'none',
+        bodyType: 'normal',
+      };
+      this.drawHumanoid(bodyG, appearance, size, elementColor, entity.facing);
     } else if (entity.type === 'npc') {
-      // NPC：身体 + 头 + 眼睛 + 感叹号标记
-      const bodyColor = 0x8a8a9a;
-      // 身体
-      bodyG.roundRect(-size * 0.25, -size * 0.1, size * 0.5, size * 0.5, 4).fill(bodyColor);
-      bodyG.roundRect(-size * 0.25, -size * 0.1, size * 0.5, size * 0.5, 4).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
-      // 头部
-      bodyG.circle(0, -size * 0.3, size * 0.2).fill(skinColor);
-      bodyG.circle(0, -size * 0.3, size * 0.2).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
-      // 眼睛
-      bodyG.circle(-size * 0.06, -size * 0.32, 1.5).fill(0x000000);
-      bodyG.circle(size * 0.06, -size * 0.32, 1.5).fill(0x000000);
-      // 感叹号（任务标记）
-      bodyG.rect(-1.5, -size * 0.65, 3, size * 0.18).fill(0xffdd00);
-      bodyG.circle(0, -size * 0.7, 2.5).fill(0xffdd00);
+      // NPC：从 NPCS 表读取外观配置，无则用默认
+      const npcDef = entity.npcId ? NPCS[entity.npcId] : undefined;
+      const appearance: NpcAppearance = npcDef?.appearance ?? {
+        bodyColor: 0x8a8a9a,
+        skinColor: 0xffdab9,
+        hairColor: 0x3a3a3a,
+        hairStyle: 'short',
+        accessory: 'none',
+        bodyType: 'normal',
+      };
+      this.drawHumanoid(bodyG, appearance, size, elementColor, entity.facing);
+      // NPC 任务标记（感叹号）
+      bodyG.rect(-1.5, -size * 0.75, 3, size * 0.18).fill(0xffdd00);
+      bodyG.circle(0, -size * 0.8, 2.5).fill(0xffdd00);
+    } else if (entity.type === 'monster') {
+      // 怪物：按怪物 id 绘制不同形态
+      this.drawMonster(bodyG, entity, size, elementColor);
     } else if (entity.type === 'projectile') {
-      // 投射物：拖尾 + 发光球
-      bodyG.circle(-size * 0.5, 0, size * 0.2).fill({ color: elementColor, alpha: 0.2 });
-      bodyG.circle(-size * 0.3, 0, size * 0.3).fill({ color: elementColor, alpha: 0.4 });
-      bodyG.circle(0, 0, size * 0.5).fill({ color: elementColor, alpha: 0.6 });
-      bodyG.circle(0, 0, size * 0.3).fill(0xffffff);
+      // 投射物：发光球 + 粒子拖尾
+      this.drawProjectile(bodyG, size, elementColor);
     }
     container.addChild(bodyG);
 
@@ -516,6 +580,285 @@ export class SceneManager {
     container.zIndex = entity.position.y;
     this.api.world.addChild(container);
     this.entityGraphics.set(entity.id, { container, hpBar, body: bodyG, direction: dirG });
+  }
+
+  /**
+   * 绘制人形角色（玩家/队友/NPC 通用）
+   * 包含：腿、身体、腰带、手臂、头、头发、眼睛、嘴、武器、元素光晕
+   */
+  private drawHumanoid(
+    g: Graphics,
+    app: NpcAppearance,
+    size: number,
+    elementColor: number,
+    _facing: number,
+  ): void {
+    // 体型缩放：slim 瘦、normal 标准、old 驼背略小、child 矮小
+    const bodyScale = app.bodyType === 'slim' ? 0.85
+      : app.bodyType === 'old' ? 0.9
+      : app.bodyType === 'child' ? 0.7
+      : 1.0;
+    const bw = size * 0.6 * bodyScale;   // 身体宽度
+    const bh = size * 0.5 * bodyScale;   // 身体高度
+    const legColor = adjustBrightness(app.bodyColor, 0.6);
+    const armColor = adjustBrightness(app.bodyColor, 0.85);
+    const beltColor = adjustBrightness(app.bodyColor, 0.4);
+
+    // 1. 腿部（两条小矩形，深色）
+    const legW = bw * 0.25;
+    const legH = size * 0.2;
+    g.rect(-bw * 0.3, size * 0.25, legW, legH).fill(legColor);
+    g.rect(bw * 0.05, size * 0.25, legW, legH).fill(legColor);
+    g.rect(-bw * 0.3, size * 0.25, legW, legH).stroke({ width: 1, color: 0x000000, alpha: 0.3 });
+    g.rect(bw * 0.05, size * 0.25, legW, legH).stroke({ width: 1, color: 0x000000, alpha: 0.3 });
+
+    // 2. 身体/躯干（圆角矩形 + 腰带线）
+    const bodyY = -size * 0.1;
+    g.roundRect(-bw / 2, bodyY, bw, bh, 4).fill(app.bodyColor);
+    g.roundRect(-bw / 2, bodyY, bw, bh, 4).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+    // 腰带
+    g.rect(-bw / 2, bodyY + bh * 0.65, bw, 2).fill(beltColor);
+
+    // 3. 手臂（两侧小矩形）
+    const armW = bw * 0.18;
+    const armH = bh * 0.7;
+    g.rect(-bw / 2 - armW, bodyY + 2, armW, armH).fill(armColor);
+    g.rect(bw / 2, bodyY + 2, armW, armH).fill(armColor);
+    g.rect(-bw / 2 - armW, bodyY + 2, armW, armH).stroke({ width: 1, color: 0x000000, alpha: 0.3 });
+    g.rect(bw / 2, bodyY + 2, armW, armH).stroke({ width: 1, color: 0x000000, alpha: 0.3 });
+
+    // 4. 头部（圆形，肤色）
+    const headR = size * 0.22 * bodyScale;
+    const headY = bodyY - headR + 2;
+    g.circle(0, headY, headR).fill(app.skinColor);
+    g.circle(0, headY, headR).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+
+    // 5. 头发（按 hairStyle 绘制）
+    this.drawHair(g, app.hairStyle, app.hairColor, headR, headY);
+
+    // 6. 眼睛（两个小黑点）
+    g.circle(-headR * 0.35, headY, Math.max(1, headR * 0.12)).fill(0x000000);
+    g.circle(headR * 0.35, headY, Math.max(1, headR * 0.12)).fill(0x000000);
+
+    // 7. 嘴（小横线）
+    g.moveTo(-headR * 0.25, headY + headR * 0.45)
+      .lineTo(headR * 0.25, headY + headR * 0.45)
+      .stroke({ width: 1, color: 0x000000, alpha: 0.6 });
+
+    // 8. 配饰（胡子/眼镜/武器等）
+    this.drawAccessory(g, app.accessory, app, size, headR, headY, bodyY, bh);
+
+    // 9. 元素光晕（武器后方小圆，alpha 0.3）
+    g.circle(size * 0.35, bodyY + bh * 0.3, size * 0.12).fill({ color: elementColor, alpha: 0.3 });
+  }
+
+  /** 按发型绘制头发 */
+  private drawHair(
+    g: Graphics,
+    style: NpcAppearance['hairStyle'],
+    hairColor: number,
+    headR: number,
+    headY: number,
+  ): void {
+    switch (style) {
+      case 'short':
+        // 短发：头顶小弧
+        g.circle(0, headY - headR * 0.4, headR * 0.85).fill(hairColor);
+        g.rect(-headR * 0.9, headY - headR * 0.4, headR * 1.8, headR * 0.5).fill(hairColor);
+        break;
+      case 'long':
+        // 长发：头顶 + 两侧下垂矩形
+        g.circle(0, headY - headR * 0.4, headR * 0.85).fill(hairColor);
+        g.rect(-headR * 1.05, headY - headR * 0.5, headR * 0.4, headR * 2.2).fill(hairColor);
+        g.rect(headR * 0.65, headY - headR * 0.5, headR * 0.4, headR * 2.2).fill(hairColor);
+        break;
+      case 'bun':
+        // 发髻：头顶圆球 + 底层头发
+        g.circle(0, headY - headR * 0.4, headR * 0.85).fill(hairColor);
+        g.circle(0, headY - headR * 1.1, headR * 0.35).fill(hairColor);
+        g.circle(0, headY - headR * 1.1, headR * 0.35).stroke({ width: 1, color: 0x000000, alpha: 0.3 });
+        break;
+      case 'bald':
+        // 光头：不画头发
+        break;
+      case 'hat':
+        // 帽子：头顶矩形 + 帽檐
+        g.rect(-headR * 1.1, headY - headR * 1.0, headR * 2.2, headR * 0.6).fill(hairColor);
+        g.rect(-headR * 1.3, headY - headR * 0.5, headR * 2.6, headR * 0.2).fill(adjustBrightness(hairColor, 0.7));
+        break;
+    }
+  }
+
+  /** 绘制配饰（胡子/眼镜/武器等） */
+  private drawAccessory(
+    g: Graphics,
+    accessory: NpcAppearance['accessory'],
+    app: NpcAppearance,
+    size: number,
+    headR: number,
+    headY: number,
+    bodyY: number,
+    bh: number,
+  ): void {
+    const bw = size * 0.6;
+    switch (accessory) {
+      case 'beard':
+        // 胡子：下巴下方小三角
+        g.moveTo(-headR * 0.3, headY + headR * 0.6)
+          .lineTo(0, headY + headR * 1.2)
+          .lineTo(headR * 0.3, headY + headR * 0.6)
+          .closePath().fill(app.hairColor);
+        break;
+      case 'glasses':
+        // 眼镜：两个圆框
+        g.circle(-headR * 0.35, headY, headR * 0.22).stroke({ width: 1, color: 0x000000 });
+        g.circle(headR * 0.35, headY, headR * 0.22).stroke({ width: 1, color: 0x000000 });
+        g.moveTo(-headR * 0.13, headY).lineTo(headR * 0.13, headY).stroke({ width: 1, color: 0x000000 });
+        break;
+      case 'sword':
+        // 剑：身体右侧斜线 + 剑柄
+        g.moveTo(bw * 0.55, bodyY + bh * 0.1)
+          .lineTo(bw * 0.85, bodyY - bh * 0.6)
+          .stroke({ width: 2, color: 0xcccccc });
+        g.rect(bw * 0.5, bodyY + bh * 0.05, bw * 0.12, bh * 0.12).fill(0x8b5a2b);
+        break;
+      case 'staff':
+        // 法杖：身体右侧竖线 + 顶端宝石
+        g.rect(bw * 0.55, bodyY - bh * 0.5, 2, bh * 1.3).fill(0x8b5a2b);
+        g.circle(bw * 0.56, bodyY - bh * 0.55, 3).fill(ELEMENT_COLOR[app.bodyColor === 0xaa66cc ? 'thunder' : 'water'] ?? 0x66ccff);
+        break;
+      case 'fan':
+        // 扇子：身体右侧小三角
+        g.moveTo(bw * 0.55, bodyY + bh * 0.2)
+          .lineTo(bw * 0.9, bodyY - bh * 0.1)
+          .lineTo(bw * 0.55, bodyY - bh * 0.3)
+          .closePath().fill(0xddcc88);
+        g.moveTo(bw * 0.55, bodyY + bh * 0.2)
+          .lineTo(bw * 0.9, bodyY - bh * 0.1)
+          .lineTo(bw * 0.55, bodyY - bh * 0.3)
+          .closePath().stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+        break;
+      case 'basket':
+        // 篮子：身体左侧小矩形 + 提手
+        g.rect(-bw * 0.85, bodyY + bh * 0.3, bw * 0.25, bh * 0.3).fill(0x8b5a2b);
+        g.rect(-bw * 0.85, bodyY + bh * 0.3, bw * 0.25, bh * 0.3).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+        g.moveTo(-bw * 0.8, bodyY + bh * 0.3)
+          .lineTo(-bw * 0.72, bodyY + bh * 0.1)
+          .lineTo(-bw * 0.65, bodyY + bh * 0.3)
+          .stroke({ width: 1, color: 0x8b5a2b });
+        break;
+      case 'none':
+      default:
+        break;
+    }
+  }
+
+  /** 绘制怪物（按怪物 id 区分形态） */
+  private drawMonster(g: Graphics, entity: Entity, size: number, elementColor: number): void {
+    const monsterDef = entity.monsterId ? MONSTER_MAP[entity.monsterId] : undefined;
+    const bodyColor = entity.sprite.color;
+    const ai = monsterDef?.ai ?? 'melee';
+    const id = entity.monsterId ?? '';
+
+    // 元素光晕背景
+    g.circle(0, 0, size * 0.5).fill({ color: elementColor, alpha: 0.15 });
+
+    if (id.startsWith('slime_')) {
+      // 史莱姆：水滴形 + 眼睛 + 波浪底
+      g.ellipse(0, 0, size * 0.4, size * 0.35).fill(bodyColor);
+      g.ellipse(0, 0, size * 0.4, size * 0.35).stroke({ width: 2, color: 0x000000, alpha: 0.5 });
+      // 波浪底
+      g.moveTo(-size * 0.35, size * 0.3)
+        .lineTo(-size * 0.2, size * 0.4).lineTo(-size * 0.05, size * 0.3)
+        .lineTo(size * 0.1, size * 0.4).lineTo(size * 0.25, size * 0.3)
+        .lineTo(size * 0.35, size * 0.35)
+        .stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+      // 眼白
+      g.circle(-size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
+      g.circle(size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
+      // 瞳孔（元素色）
+      g.circle(-size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
+      g.circle(size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
+      // 嘴
+      g.moveTo(-size * 0.08, size * 0.1).lineTo(size * 0.08, size * 0.1)
+        .stroke({ width: 1, color: 0x000000 });
+    } else if (id === 'wild_wolf' || id === 'bat_demon') {
+      // 狼/蝠：拉长身体 + 尖耳 + 尾巴 + 腿
+      g.ellipse(0, 0, size * 0.45, size * 0.25).fill(bodyColor);
+      g.ellipse(0, 0, size * 0.45, size * 0.25).stroke({ width: 2, color: 0x000000, alpha: 0.5 });
+      // 尖耳
+      g.moveTo(-size * 0.25, -size * 0.2).lineTo(-size * 0.15, -size * 0.4).lineTo(-size * 0.1, -size * 0.2)
+        .closePath().fill(bodyColor);
+      g.moveTo(size * 0.25, -size * 0.2).lineTo(size * 0.15, -size * 0.4).lineTo(size * 0.1, -size * 0.2)
+        .closePath().fill(bodyColor);
+      // 尾巴
+      g.moveTo(size * 0.4, 0).lineTo(size * 0.6, -size * 0.15).lineTo(size * 0.55, size * 0.05)
+        .closePath().fill(bodyColor);
+      // 腿
+      g.rect(-size * 0.25, size * 0.2, size * 0.1, size * 0.15).fill(adjustBrightness(bodyColor, 0.7));
+      g.rect(size * 0.15, size * 0.2, size * 0.1, size * 0.15).fill(adjustBrightness(bodyColor, 0.7));
+      // 发光眼睛
+      g.circle(-size * 0.15, -size * 0.05, size * 0.05).fill(elementColor);
+      g.circle(size * 0.15, -size * 0.05, size * 0.05).fill(elementColor);
+      g.circle(-size * 0.15, -size * 0.05, size * 0.025).fill(0xffffff);
+      g.circle(size * 0.15, -size * 0.05, size * 0.025).fill(0xffffff);
+    } else if (id === 'gudao_bandit') {
+      // 山贼：人形 + 深色衣服 + 武器
+      g.roundRect(-size * 0.3, -size * 0.1, size * 0.6, size * 0.5, 4).fill(bodyColor);
+      g.roundRect(-size * 0.3, -size * 0.1, size * 0.6, size * 0.5, 4).stroke({ width: 1, color: 0x000000, alpha: 0.5 });
+      g.circle(0, -size * 0.3, size * 0.2).fill(0xe8c39e);
+      g.circle(0, -size * 0.3, size * 0.2).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+      // 蒙面布
+      g.rect(-size * 0.18, -size * 0.28, size * 0.36, size * 0.12).fill(0x2a2a2a);
+      // 凶恶眼睛
+      g.circle(-size * 0.07, -size * 0.32, 1.5).fill(0xff3333);
+      g.circle(size * 0.07, -size * 0.32, 1.5).fill(0xff3333);
+      // 武器（弯刀）
+      g.moveTo(size * 0.3, -size * 0.1).lineTo(size * 0.5, -size * 0.3).lineTo(size * 0.45, -size * 0.05)
+        .closePath().fill(0xcccccc);
+    } else if (ai === 'boss' || id === 'jiaowai_yaoshou') {
+      // Boss：更大身体 + 多眼 + 威慑光环
+      g.circle(0, 0, size * 0.55).fill({ color: elementColor, alpha: 0.2 });
+      g.circle(0, 0, size * 0.45).fill(bodyColor);
+      g.circle(0, 0, size * 0.45).stroke({ width: 3, color: 0x000000, alpha: 0.6 });
+      // 多只眼睛（3 只）
+      g.circle(-size * 0.18, -size * 0.1, size * 0.08).fill(0xffffff);
+      g.circle(0, -size * 0.15, size * 0.08).fill(0xffffff);
+      g.circle(size * 0.18, -size * 0.1, size * 0.08).fill(0xffffff);
+      g.circle(-size * 0.18, -size * 0.1, size * 0.04).fill(elementColor);
+      g.circle(0, -size * 0.15, size * 0.04).fill(elementColor);
+      g.circle(size * 0.18, -size * 0.1, size * 0.04).fill(elementColor);
+      // 獠牙嘴
+      g.moveTo(-size * 0.15, size * 0.1).lineTo(-size * 0.08, size * 0.25).lineTo(-size * 0.02, size * 0.1)
+        .lineTo(size * 0.04, size * 0.25).lineTo(size * 0.1, size * 0.1).lineTo(size * 0.15, size * 0.22)
+        .stroke({ width: 1.5, color: 0x000000 });
+      // 角
+      g.moveTo(-size * 0.3, -size * 0.3).lineTo(-size * 0.45, -size * 0.55).lineTo(-size * 0.2, -size * 0.35)
+        .closePath().fill(adjustBrightness(bodyColor, 0.5));
+      g.moveTo(size * 0.3, -size * 0.3).lineTo(size * 0.45, -size * 0.55).lineTo(size * 0.2, -size * 0.35)
+        .closePath().fill(adjustBrightness(bodyColor, 0.5));
+    } else {
+      // 默认怪物形态：圆形 + 眼睛 + 嘴
+      g.circle(0, 0, size * 0.4).fill(bodyColor);
+      g.circle(0, 0, size * 0.4).stroke({ width: 2, color: 0x000000, alpha: 0.5 });
+      g.circle(-size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
+      g.circle(size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
+      g.circle(-size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
+      g.circle(size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
+      g.moveTo(-size * 0.1, size * 0.12).lineTo(0, size * 0.22).lineTo(size * 0.1, size * 0.12)
+        .stroke({ width: 1, color: 0x000000 });
+    }
+  }
+
+  /** 绘制投射物（发光球 + 粒子拖尾） */
+  private drawProjectile(g: Graphics, size: number, elementColor: number): void {
+    // 4 个递减 alpha 的拖尾圆
+    g.circle(-size * 0.6, 0, size * 0.15).fill({ color: elementColor, alpha: 0.15 });
+    g.circle(-size * 0.4, 0, size * 0.22).fill({ color: elementColor, alpha: 0.3 });
+    g.circle(-size * 0.2, 0, size * 0.3).fill({ color: elementColor, alpha: 0.45 });
+    // 主体发光球
+    g.circle(0, 0, size * 0.5).fill({ color: elementColor, alpha: 0.6 });
+    g.circle(0, 0, size * 0.3).fill(0xffffff);
   }
 
   /** 每帧更新 */

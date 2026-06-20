@@ -9,6 +9,7 @@ import { shopManager } from '../shop/ShopManager';
 import { questManager } from '../quest/QuestManager';
 import { saveManager } from '../save/SaveManager';
 import type { SceneManager } from '../scene/SceneManager';
+import type { MobileControls } from './MobileControls';
 import { Graphics, Container, Text } from 'pixi.js';
 import { RARITY_COLOR, ITEM_MAP } from '../data/items';
 import { ELEMENT_COLOR } from '../data/element';
@@ -73,6 +74,9 @@ export class UIManager {
   // 通用计时器
   private blinkTimer = 0;
 
+  // 手机控制引用
+  private mobileControls: MobileControls | null = null;
+
   constructor(api: EngineApi, scene: SceneManager) {
     this.api = api;
     this.scene = scene;
@@ -84,10 +88,17 @@ export class UIManager {
     this.showTitle();
   }
 
+  /** 设置手机控制引用 */
+  setMobileControls(mobile: MobileControls): void {
+    this.mobileControls = mobile;
+  }
+
   /** 显示标题界面 */
   showTitle(): void {
     this.clearUI();
     this.currentScreen = 'title';
+    // 标题界面隐藏手机控制
+    this.mobileControls?.hide();
     const container = new Container();
     const W = this.api.screen.width;
     const H = this.api.screen.height;
@@ -316,6 +327,9 @@ export class UIManager {
     this.messageText.visible = false;
     this.uiContainer.addChild(this.messageText);
 
+    // 游戏界面显示手机控制
+    this.mobileControls?.show();
+
     this.updateHUD();
   }
 
@@ -453,11 +467,15 @@ export class UIManager {
     const boxX = 50;
     const boxY = this.api.screen.height - boxH - 20;
 
-    // 对话框背景
+    // 对话框背景（可点击推进对话）
     const bg = new Graphics();
-    bg.eventMode = 'none';
+    bg.eventMode = 'static';
+    bg.cursor = 'pointer';
     bg.roundRect(boxX, boxY, boxW, boxH, 8).fill({ color: 0x000000, alpha: 0.85 });
     bg.roundRect(boxX, boxY, boxW, boxH, 8).stroke({ width: 2, color: 0xffcc44 });
+    bg.on('pointerdown', () => {
+      dialogueManager.advance();
+    });
     container.addChild(bg);
 
     // 左侧头像区域（彩色圆形 + 说话者名字）

@@ -4,6 +4,7 @@
 
 import type { Element, VisualRef } from '../core/types';
 import type { Stats } from './stats';
+import type { NpcAppearance } from './npcs';
 
 /** 角色定义 */
 export interface CharacterDef {
@@ -16,6 +17,7 @@ export interface CharacterDef {
   skills: string[];         // 可学技能 id 列表（按等级解锁）
   portrait: VisualRef;      // 立绘占位
   sprite: VisualRef;        // 战场精灵占位
+  appearance?: NpcAppearance; // 视觉外观配置
 }
 
 /** 视觉占位快捷构造 */
@@ -45,6 +47,14 @@ export const CHARACTERS: CharacterDef[] = [
     skills: ['jt_qixing', 'jt_huoyan_zhan', 'jt_fentian', 'jt_feitian_daxue'],
     portrait: vis('rect', 0xff6644, 64, '景天'),
     sprite: vis('rect', 0xff6644, 32, '景'),
+    appearance: {
+      bodyColor: 0xff6644,      // 红橙色战士装
+      skinColor: 0xf0c8a0,      // 古铜肤色
+      hairColor: 0x1a1a1a,      // 黑色短发
+      hairStyle: 'short',
+      accessory: 'sword',
+      bodyType: 'normal',
+    },
   },
 
   // 长卿 —— 雷属性剑士，攻速快连击
@@ -64,6 +74,14 @@ export const CHARACTERS: CharacterDef[] = [
     skills: ['cq_leiting_jian', 'cq_lianshan', 'cq_shanying', 'cq_wanjian'],
     portrait: vis('triangle', 0xcc99ff, 64, '长卿'),
     sprite: vis('triangle', 0xcc99ff, 32, '卿'),
+    appearance: {
+      bodyColor: 0xeef2ff,      // 白蓝色剑士装
+      skinColor: 0xfad6b8,      // 白皙肤色
+      hairColor: 0x2a2a3a,      // 深色长发
+      hairStyle: 'long',
+      accessory: 'sword',
+      bodyType: 'slim',
+    },
   },
 
   // 雪见 —— 土属性法师，群体法术脆皮
@@ -83,6 +101,14 @@ export const CHARACTERS: CharacterDef[] = [
     skills: ['xj_luoshi', 'xj_dilie', 'xj_shifu', 'xj_yunshi'],
     portrait: vis('diamond', 0xcc9966, 64, '雪见'),
     sprite: vis('diamond', 0xcc9966, 32, '雪'),
+    appearance: {
+      bodyColor: 0xcc9966,      // 土色调法师袍
+      skinColor: 0xfad6b8,      // 白皙肤色
+      hairColor: 0x4a2a1a,      // 棕黑长发
+      hairStyle: 'long',
+      accessory: 'none',
+      bodyType: 'slim',
+    },
   },
 
   // 龙葵 —— 雷属性法师，单体高爆发
@@ -102,6 +128,14 @@ export const CHARACTERS: CharacterDef[] = [
     skills: ['lk_leiji', 'lk_liansuo', 'lk_hunji', 'lk_leibao'],
     portrait: vis('diamond', 0x9966ff, 64, '龙葵'),
     sprite: vis('diamond', 0x9966ff, 32, '葵'),
+    appearance: {
+      bodyColor: 0x9966ff,      // 紫色雷系法师袍
+      skinColor: 0xf0d8c0,      // 苍白肤色
+      hairColor: 0x4a2a6a,      // 深紫长发
+      hairStyle: 'long',
+      accessory: 'none',
+      bodyType: 'slim',
+    },
   },
 
   // 紫萱 —— 水属性治疗，回复 + 增益
@@ -121,6 +155,14 @@ export const CHARACTERS: CharacterDef[] = [
     skills: ['zx_huichun', 'zx_jingshui', 'zx_shuijing', 'zx_pudu'],
     portrait: vis('circle', 0x6699ff, 64, '紫萱'),
     sprite: vis('circle', 0x6699ff, 32, '萱'),
+    appearance: {
+      bodyColor: 0x6699ff,      // 蓝色治疗袍
+      skinColor: 0xfad6b8,      // 白皙肤色
+      hairColor: 0x2a1a3a,      // 深紫长发
+      hairStyle: 'long',
+      accessory: 'staff',
+      bodyType: 'slim',
+    },
   },
 ];
 
