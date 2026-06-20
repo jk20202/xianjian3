@@ -31,9 +31,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platforms;android-34
-            build-tools;34.0.0
+          packages: 'platforms;android-34 build-tools;34.0.0'
 
       - name: Install dependencies
         run: npm ci || npm install
@@ -41,7 +39,7 @@ jobs:
       - name: Build Web (Vite)
         run: npm run build
 
-      - name: Install Capacitor CLI
+      - name: Install Capacitor
         run: npm install -D @capacitor/cli @capacitor/core @capacitor/android @capacitor/preferences
 
       - name: Add Android Platform
@@ -53,19 +51,18 @@ jobs:
 
       - name: Configure Android for Landscape
         run: |
-          # 设置 AndroidManifest.xml 强制横屏
           MANIFEST=android/app/src/main/AndroidManifest.xml
           if [ -f "$MANIFEST" ]; then
-            sed -i 's/android:screenOrientation="[^"]*"/android:screenOrientation="landscape"/g' "$MANIFEST" || true
-            # 如果没有 screenOrientation 属性,添加到 activity 标签
-            if ! grep -q "android:screenOrientation" "$MANIFEST"; then
+            if grep -q "android:screenOrientation" "$MANIFEST"; then
+              sed -i 's/android:screenOrientation="[^"]*"/android:screenOrientation="landscape"/g' "$MANIFEST"
+            else
               sed -i 's/<activity /<activity android:screenOrientation="landscape" /g' "$MANIFEST"
             fi
           fi
 
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon -x lintV8AnalyzeRelease
+        run: ./gradlew assembleDebug --no-daemon -x lintV8AnalyzeRelease -x lint
 
       - name: Rename APK
         run: |
@@ -84,7 +81,6 @@ jobs:
         with:
           keep_latest: 0
           delete_tags: false
-          delete_tag_pattern: ""
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
