@@ -1,18 +1,26 @@
 {
   "name": "xianjian-fairy-tale",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "仙剑奇侠传3 同人 ARPG 小游戏 - 三端共通(Web/APP/小程序)",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "cap:sync": "npm run build && npx cap sync android",
+    "cap:open": "npx cap open android",
+    "apk:debug": "npm run build && npx cap sync android && cd android && ./gradlew assembleDebug",
+    "apk:release": "npm run build && npx cap sync android && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/preferences": "^6.0.0",
     "phaser": "^3.80.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.0.0",
     "typescript": "^5.4.5",
     "vite": "^5.2.0"
   }

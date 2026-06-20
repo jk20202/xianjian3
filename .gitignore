@@ -5,3 +5,11 @@ dist/
 .env
 .vercel
 .wrangler
+
+# Android (CI 中自动生成,不入库)
+android/
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+*.apk
