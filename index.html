@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0a0a12" />
+    <meta name="description" content="仙剑奇侠传3 同人 ARPG 小游戏 - 自由探索·即时战斗·五灵相克" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="仙剑同人" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>仙剑奇侠传·同人篇</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a12; }
+      body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+      #game-root { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+      canvas { display: block; touch-action: none; }
+      #loading {
+        position: absolute; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; color: #c9b072;
+        background: radial-gradient(circle at center, #1a1428 0%, #0a0a12 100%);
+        font-size: 18px; letter-spacing: 4px; z-index: 10;
+      }
+      #loading .title { font-size: 32px; margin-bottom: 16px; color: #e8d9a0; text-shadow: 0 0 12px #c9b07255; }
+      #loading .sub { font-size: 13px; color: #8a7a55; letter-spacing: 2px; }
+    </style>
+  </head>
+  <body>
+    <div id="game-root">
+      <div id="loading">
+        <div class="title">仙劍奇俠傳</div>
+        <div class="sub">同人篇 · 加载中…</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "仙剑奇侠传·同人篇",
+  "short_name": "仙剑同人",
+  "description": "仙剑奇侠传3 同人 ARPG 小游戏 - 自由探索·即时战斗·五灵相克",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0a0a12",
+  "theme_color": "#0a0a12",
+  "lang": "zh-CN",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "name": "xianjian-fairy-tale",
+  "version": "0.1.0",
+  "description": "仙剑奇侠传3 同人 ARPG 小游戏 - 三端共通(Web/APP/小程序)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vite": "^5.2.0"
+  }
+}
