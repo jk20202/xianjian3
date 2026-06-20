@@ -1,0 +1,126 @@
+// core/input.ts
+// 输入系统：键盘 + 虚拟摇杆（移动端）。
+// 把原始按键事件抽象成"意图"，战斗/移动模块只读意图，三端共用。
+
+export interface InputState {
+  /** 移动意图向量（归一化），x/y ∈ [-1,1] */
+  move: { x: number; y: number };
+  /** 平A按下（本帧边沿触发） */
+  attackPressed: boolean;
+  /** 平A持续按住 */
+  attackHeld: boolean;
+  /** 技能按键 0-4 边沿触发 */
+  skillPressed: [boolean, boolean, boolean, boolean, boolean];
+  /** 翻滚 */
+  dodgePressed: boolean;
+  /** 菜单切换 */
+  menuToggle: boolean;
+  /** 确认/对话推进 */
+  confirm: boolean;
+  /** 交互（拾取/对话） */
+  interact: boolean;
+}
+
+export class InputManager {
+  private keys = new Set<string>();
+  private pressedThisFrame = new Set<string>();
+  state: InputState = {
+    move: { x: 0, y: 0 },
+    attackPressed: false,
+    attackHeld: false,
+    skillPressed: [false, false, false, false, false],
+    dodgePressed: false,
+    menuToggle: false,
+    confirm: false,
+    interact: false,
+  };
+
+  // 虚拟摇杆（移动端），由 UI 层设置
+  virtualMove: { x: number; y: number } = { x: 0, y: 0 };
+  private virtualButtons = new Set<string>();
+
+  private boundDown: (e: KeyboardEvent) => void;
+  private boundUp: (e: KeyboardEvent) => void;
+
+  constructor() {
+    this.boundDown = (e) => {
+      const k = e.key.toLowerCase();
+      if (!this.keys.has(k)) this.pressedThisFrame.add(k);
+      this.keys.add(k);
+      // 阻止方向键/空格滚屏
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) {
+        e.preventDefault();
+      }
+    };
+    this.boundUp = (e) => {
+      this.keys.delete(e.key.toLowerCase());
+    };
+    window.addEventListener('keydown', this.boundDown);
+    window.addEventListener('keyup', this.boundUp);
+  }
+
+  /** 每帧开头调用：把本帧边沿事件压入 state */
+  beginFrame(): void {
+    const has = (k: string) => this.keys.has(k) || this.virtualButtons.has(k);
+    const just = (k: string) => this.pressedThisFrame.has(k) || this.virtualButtons.has(`__vbtn_${k}`) && false;
+
+    // 移动意图
+    let mx = 0, my = 0;
+    if (has('a') || has('arrowleft')) mx -= 1;
+    if (has('d') || has('arrowright')) mx += 1;
+    if (has('w') || has('arrowup')) my -= 1;
+    if (has('s') || has('arrowdown')) my += 1;
+    // 键盘优先，没按则用虚拟摇杆
+    if (mx === 0 && my === 0) {
+      mx = this.virtualMove.x;
+      my = this.virtualMove.y;
+    } else {
+      const len = Math.hypot(mx, my) || 1;
+      mx /= len; my /= len;
+    }
+    this.state.move.x = mx;
+    this.state.move.y = my;
+
+    // 平A：J
+    this.state.attackPressed = this.pressedThisFrame.has('j') || this.virtualButtons.has('__atk_');
+    this.state.attackHeld = has('j') || this.virtualButtons.has('atk');
+
+    // 技能：K L U I O
+    const skillKeys = ['k', 'l', 'u', 'i', 'o'];
+    this.state.skillPressed = [
+      false, false, false, false, false,
+    ].map((_, i) =>
+      this.pressedThisFrame.has(skillKeys[i]) || this.virtualButtons.has(`skill${i}`)
+    ) as InputState['skillPressed'];
+
+    this.state.dodgePressed = this.pressedThisFrame.has(' ');
+    this.state.menuToggle = this.pressedThisFrame.has('tab') || this.pressedThisFrame.has('escape');
+    this.state.confirm = this.pressedThisFrame.has('e') || this.pressedThisFrame.has('enter') || this.pressedThisFrame.has(' ');
+    this.state.interact = this.pressedThisFrame.has('e') || this.pressedThisFrame.has('f');
+  }
+
+  /** 每帧结尾调用：清空边沿事件 */
+  endFrame(): void {
+    this.pressedThisFrame.clear();
+  }
+
+  /** 虚拟按键（移动端 UI 调用） */
+  setVirtualButton(name: string, pressed: boolean): void {
+    if (pressed) {
+      this.virtualButtons.add(name);
+      this.pressedThisFrame.add(`__vbtn_${name}`);
+    } else {
+      this.virtualButtons.delete(name);
+    }
+  }
+
+  setVirtualMove(x: number, y: number): void {
+    this.virtualMove.x = x;
+    this.virtualMove.y = y;
+  }
+
+  destroy(): void {
+    window.removeEventListener('keydown', this.boundDown);
+    window.removeEventListener('keyup', this.boundUp);
+  }
+}
