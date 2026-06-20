@@ -55,7 +55,7 @@ export class UIScene extends Phaser.Scene {
 
     // 操作提示
     this.add.text(this.scale.width / 2, this.scale.height - 8,
-      'WASD移动 · J/左键平A · K L U I O 技能 · Tab切换 · E交互 · Esc菜单', {
+      '左摇杆移动 · 攻键平A · 技能键 · Tab切换 · E/空格交互 · Esc菜单', {
       fontSize: '10px', color: '#665544',
     }).setOrigin(0.5, 1);
 

@@ -2,9 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover" />
     <meta name="theme-color" content="#0a0a12" />
     <meta name="description" content="仙剑奇侠传3 同人 ARPG 小游戏 - 自由探索·即时战斗·五灵相克" />
+    <meta name="screen-orientation" content="landscape" />
+    <meta name="x5-orientation" content="landscape" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" type="image/png" href="./icons/icon-192.png" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
@@ -15,10 +17,42 @@
     <title>仙剑奇侠传·同人篇</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a12; }
+      html, body {
+        width: 100%; height: 100%; overflow: hidden;
+        background: #0a0a12;
+        touch-action: manipulation;
+      }
       body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
-      #game-root { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+      /* 横屏主容器 */
+      #game-root {
+        width: 100vw; height: 100vh;
+        display: flex; align-items: center; justify-content: center;
+      }
       canvas { display: block; touch-action: none; }
+
+      /* 竖屏提示旋转 */
+      #rotate-hint {
+        display: none;
+        position: fixed; inset: 0; z-index: 9999;
+        background: #0a0a12;
+        flex-direction: column; align-items: center; justify-content: center;
+        color: #c9b072; font-size: 18px; letter-spacing: 2px;
+      }
+      #rotate-hint .icon { font-size: 64px; margin-bottom: 20px; animation: rotate-icon 2s ease-in-out infinite; }
+      @keyframes rotate-icon { 0%,100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
+      #rotate-hint .txt { color: #e8d9a0; }
+      #rotate-hint .sub { font-size: 12px; color: #8a7a55; margin-top: 8px; }
+
+      @media (orientation: portrait) {
+        #rotate-hint { display: flex; }
+        #game-root { display: none; }
+      }
+      @media (orientation: landscape) {
+        #rotate-hint { display: none; }
+        #game-root { display: flex; }
+      }
+
       #loading {
         position: absolute; inset: 0; display: flex; flex-direction: column;
         align-items: center; justify-content: center; color: #c9b072;
@@ -30,6 +64,11 @@
     </style>
   </head>
   <body>
+    <div id="rotate-hint">
+      <div class="icon">📱</div>
+      <div class="txt">请旋转设备至横屏</div>
+      <div class="sub">本游戏为横屏模式，请将手机横放以获得最佳体验</div>
+    </div>
     <div id="game-root">
       <div id="loading">
         <div class="title">仙劍奇俠傳</div>

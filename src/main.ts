@@ -21,6 +21,12 @@ const config: Phaser.Types.Core.GameConfig = {
     width: GAME_WIDTH,
     height: GAME_HEIGHT,
   },
+  input: {
+    keyboard: true,
+    mouse: true,
+    touch: true,
+    gamepad: false,
+  },
   physics: {
     default: 'arcade',
     arcade: { debug: false, gravity: { x: 0, y: 0 } },
@@ -28,6 +34,11 @@ const config: Phaser.Types.Core.GameConfig = {
   render: { antialias: true, roundPixels: false },
   scene: [BootScene, PreloadScene, MenuScene, WorldScene, UIScene, DialogScene, SaveScene],
 };
+
+// 尝试锁定横屏(支持的环境)
+if (screen.orientation && (screen.orientation as any).lock) {
+  (screen.orientation as any).lock('landscape').catch(() => {});
+}
 
 // 移除 loading 占位
 const loading = document.getElementById('loading');

@@ -29,7 +29,7 @@ interface Projectile {
   aoe?: number;
 }
 
-/** 世界场景:地图 + 自由移动 + ARPG 即时战斗 */
+/** 世界场景:地图 + 自由移动 + ARPG 即时战斗 + 虚拟摇杆 + 屏幕按钮 */
 export class WorldScene extends Phaser.Scene {
   map!: MapDef;
   tileLayer!: Phaser.GameObjects.Container;
@@ -47,13 +47,32 @@ export class WorldScene extends Phaser.Scene {
   paused = false;
   combatLockUntil = 0;
 
+  // 虚拟摇杆
+  private joyBase!: Phaser.GameObjects.Arc;
+  private joyThumb!: Phaser.GameObjects.Arc;
+  private joyCenter = { x: 0, y: 0 };
+  private joyActive = false;
+  private joyPointerId = -1;
+  private joyDir = { x: 0, y: 0 };
+  private joyMaxDist = 38;
+
+  // UI 按钮引用
+  private btnAttack!: Phaser.GameObjects.Arc;
+  private skillBtns: Phaser.GameObjects.Arc[] = [];
+  private skillLabels: Phaser.GameObjects.Text[] = [];
+
   constructor() { super('WorldScene'); }
 
-  init(data: { fromMenu?: boolean }) {
+  init(_data: { fromMenu?: boolean }) {
     this.enemies = [];
     this.projectiles = [];
     this.encounterCooldown = 0;
     this.activeMemberIdx = 0;
+    this.joyActive = false;
+    this.joyDir = { x: 0, y: 0 };
+    this.joyPointerId = -1;
+    this.skillBtns = [];
+    this.skillLabels = [];
   }
 
   create() {
@@ -62,27 +81,23 @@ export class WorldScene extends Phaser.Scene {
     this.buildMap();
     this.spawnPlayer();
     this.bindInput();
+    this.createVirtualJoystick();
+    this.createAttackButton();
+    this.createSkillButtons();
     this.spawnEnemies();
     this.cameras.main.fadeIn(300, 0, 0, 0);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
     this.cameras.main.setZoom(1.1);
 
-    // 地图名提示
     this.showMapTitle(this.map.name);
-
-    // 进入地图自动剧情
     this.time.delayedCall(800, () => this.checkAutoStory());
-
-    // 自动存档(每 30s)
     this.time.addEvent({ delay: 30000, loop: true, callback: () => this.doAutosave() });
 
-    // 场景事件
     this.events.on('resume', () => { this.paused = false; });
     this.events.on('pause', () => { this.paused = true; });
 
-    // 监听 UI 场景的存档/菜单请求
-    this.sys.events.on('open-save', (mode: string) => {
-      this.scene.pause().launch('SaveScene', { mode, returnScene: 'WorldScene' });
+    this.sys.events.on('open-save', (_mode: string) => {
+      this.scene.pause().launch('SaveScene', { mode: _mode, returnScene: 'WorldScene' });
     });
     this.sys.events.on('resume-world', () => {
       this.scene.resume();
@@ -92,7 +107,6 @@ export class WorldScene extends Phaser.Scene {
   // ===== 地图构建 =====
   private buildMap() {
     const m = this.map;
-    // 背景
     this.cameras.main.setBackgroundColor(m.bg);
     this.add.rectangle(0, 0, m.width * m.tilesize, m.height * m.tilesize, m.bg).setOrigin(0);
 
@@ -112,28 +126,140 @@ export class WorldScene extends Phaser.Scene {
         const tile = this.add.image(px, py, tex).setOrigin(0);
         this.tileLayer.add(tile);
         if (t === 1) {
-          // 障碍:添加物理碰撞体
-          const body = this.add.rectangle(px + TS / 2, py + TS / 2, TS, TS, 0x000000, 0) as unknown as Phaser.GameObjects.Rectangle;
-          this.wallBodies.add(body);
+          const wall = this.add.image(px + TS / 2, py + TS / 2, 'tile_wall').setVisible(false);
+          this.physics.add.existing(wall, true);
+          this.wallBodies.add(wall);
         }
       }
     }
 
-    // 出口标记
+    this.scatterDecorations();
+
     for (const ex of m.exits) {
-      const ring = this.add.circle(ex.x, ex.y, 14, 0x000000, 0).setStrokeStyle(2, 0xc9b072, 0.7);
+      const ring = this.add.circle(ex.x, ex.y, 16, 0xc9b072, 0.15).setStrokeStyle(2, 0xffe9a0, 0.8);
+      this.tweens.add({ targets: ring, alpha: 0.4, yoyo: true, repeat: -1, duration: 800 });
       this.tileLayer.add(ring);
     }
 
-    // NPC
     for (const npc of m.npcs) {
       const sp = this.add.image(npc.x, npc.y, 'npc_generic').setTint(npc.color);
-      const label = this.add.text(npc.x, npc.y - 22, npc.name, {
-        fontSize: '11px', color: '#e8d9a0', backgroundColor: '#00000088', padding: { x: 4, y: 1 },
+      const label = this.add.text(npc.x, npc.y - 24, npc.name, {
+        fontSize: '11px', color: '#e8d9a0', backgroundColor: '#000000aa', padding: { x: 5, y: 2 },
       }).setOrigin(0.5);
+      const bubble = this.add.text(npc.x, npc.y - 40, '!', {
+        fontSize: '14px', color: '#ffd97a', fontStyle: 'bold',
+      }).setOrigin(0.5);
+      this.tweens.add({ targets: bubble, y: npc.y - 44, yoyo: true, repeat: -1, duration: 600 });
       sp.setInteractive({ useHandCursor: true });
       sp.on('pointerdown', () => this.interactNPC(npc.id));
-      this.tileLayer.add(sp); this.tileLayer.add(label);
+      this.tileLayer.add(sp); this.tileLayer.add(label); this.tileLayer.add(bubble);
+    }
+  }
+
+  private scatterDecorations() {
+    const m = this.map;
+    const TS = m.tilesize;
+    let seed = 0;
+    for (let i = 0; i < m.id.length; i++) seed = (seed * 31 + m.id.charCodeAt(i)) | 0;
+    const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+
+    const isWalkable = (px: number, py: number) => {
+      const tx = Math.floor(px / TS), ty = Math.floor(py / TS);
+      return m.tiles[ty]?.[tx] === 0 || m.tiles[ty]?.[tx] === 2;
+    };
+
+    const isTown = ['yuzhou', 'tangjiabao', 'fengdu'].includes(m.id);
+    const isForest = ['bishan', 'gutenglin'].includes(m.id);
+    const isMountain = ['shushan_road', 'shushan'].includes(m.id);
+    const isFire = ['rongyan_diyu'].includes(m.id);
+    const isIce = ['bingfenggu', 'haidicheng'].includes(m.id);
+    const isGhost = ['fengdu', 'jianzhong'].includes(m.id);
+
+    if (isMountain || isForest) {
+      for (let i = 0; i < 4; i++) {
+        const x = 100 + rand() * (m.width * TS - 200);
+        const y = 60 + rand() * 40;
+        const mt = this.add.image(x, y, 'deco_mountain').setAlpha(0.4).setScale(0.8 + rand() * 0.4);
+        this.tileLayer.add(mt);
+      }
+    }
+
+    const treeCount = isForest ? 40 : isTown ? 12 : isMountain ? 20 : 15;
+    for (let i = 0; i < treeCount; i++) {
+      let x: number, y: number, tries = 0;
+      do {
+        x = (2 + rand() * (m.width - 4)) * TS;
+        y = (2 + rand() * (m.height - 4)) * TS;
+        tries++;
+      } while (!isWalkable(x, y) && tries < 10);
+      if (tries >= 10) continue;
+      const pine = isMountain || isIce;
+      const tex = pine ? 'deco_tree_pine' : 'deco_tree';
+      const tree = this.add.image(x, y + 16, tex).setScale(0.8 + rand() * 0.4);
+      this.tileLayer.add(tree);
+    }
+
+    if (isForest || isTown) {
+      for (let i = 0; i < 25; i++) {
+        const x = (2 + rand() * (m.width - 4)) * TS;
+        const y = (2 + rand() * (m.height - 4)) * TS;
+        if (!isWalkable(x, y)) continue;
+        const bush = this.add.image(x, y, 'deco_bush').setScale(0.7 + rand() * 0.5);
+        this.tileLayer.add(bush);
+      }
+    }
+
+    if (isTown || isForest) {
+      for (let i = 0; i < 20; i++) {
+        const x = (2 + rand() * (m.width - 4)) * TS;
+        const y = (2 + rand() * (m.height - 4)) * TS;
+        if (!isWalkable(x, y)) continue;
+        const flower = this.add.image(x, y, 'deco_flower').setScale(0.6 + rand() * 0.4);
+        this.tileLayer.add(flower);
+      }
+    }
+
+    if (isMountain || isFire || isIce) {
+      for (let i = 0; i < 18; i++) {
+        const x = (2 + rand() * (m.width - 4)) * TS;
+        const y = (2 + rand() * (m.height - 4)) * TS;
+        if (!isWalkable(x, y)) continue;
+        const rock = this.add.image(x, y, 'deco_rock').setScale(0.6 + rand() * 0.6).setTint(
+          isIce ? 0xaaccee : isFire ? 0x884422 : 0xffffff
+        );
+        this.tileLayer.add(rock);
+      }
+    }
+
+    if (isTown) {
+      for (let i = 0; i < 8; i++) {
+        const x = (3 + rand() * (m.width - 6)) * TS;
+        const y = (3 + rand() * (m.height - 6)) * TS;
+        if (!isWalkable(x, y)) continue;
+        const lantern = this.add.image(x, y - 16, 'deco_lantern');
+        this.tweens.add({ targets: lantern, alpha: 0.7, yoyo: true, repeat: -1, duration: 1200 + rand() * 800 });
+        this.tileLayer.add(lantern);
+      }
+    }
+
+    if (isTown) {
+      const wellX = (m.width / 2) | 0;
+      const wellY = (m.height / 2) | 0;
+      if (m.tiles[wellY]?.[wellX] === 0) {
+        const well = this.add.image(wellX * TS + TS / 2, wellY * TS + TS / 2, 'deco_well');
+        this.tileLayer.add(well);
+      }
+    }
+
+    if (isGhost || isFire) {
+      for (let i = 0; i < 10; i++) {
+        const x = (2 + rand() * (m.width - 4)) * TS;
+        const y = (2 + rand() * (m.height - 4)) * TS;
+        if (!isWalkable(x, y)) continue;
+        const torch = this.add.image(x, y, 'deco_torch');
+        this.tweens.add({ targets: torch, scaleX: 1.1, scaleY: 0.95, yoyo: true, repeat: -1, duration: 200 + rand() * 200 });
+        this.tileLayer.add(torch);
+      }
     }
   }
 
@@ -141,12 +267,15 @@ export class WorldScene extends Phaser.Scene {
     const leader = GameContext.leader;
     const tex = `player_${leader.id}`;
     this.player = this.physics.add.sprite(GameContext.playerX, GameContext.playerY, tex);
-    this.player.setCircle(12, 8, 12);
+    // 纹理 32x40,碰撞体贴合脚部
+    this.player.body!.setSize(16, 12);
+    this.player.body!.setOffset(8, 28);
     this.player.setCollideWorldBounds(true);
     this.physics.world.setBounds(0, 0, this.map.width * this.map.tilesize, this.map.height * this.map.tilesize);
     this.physics.add.collider(this.player, this.wallBodies);
   }
 
+  // ===== 键盘输入 =====
   private bindInput() {
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.keys = this.input.keyboard!.addKeys({
@@ -166,12 +295,7 @@ export class WorldScene extends Phaser.Scene {
       SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE,
     }) as Record<string, Phaser.Input.Keyboard.Key>;
 
-    // 鼠标平A
-    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-      if (p.leftButtonDown() && !this.paused) this.doBasicAttack();
-    });
-
-    // 技能键
+    this.keys.J.on('down', () => { if (!this.paused) this.doBasicAttack(); });
     this.skillKeys = ['K', 'L', 'U', 'I', 'O'];
     for (const k of this.skillKeys) {
       this.keys[k].on('down', () => this.tryCastSkill(this.skillKeys.indexOf(k)));
@@ -182,11 +306,172 @@ export class WorldScene extends Phaser.Scene {
     this.keys.ESC.on('down', () => this.openPauseMenu());
   }
 
+  // ===== 虚拟摇杆(圆形方向盘) =====
+  private createVirtualJoystick() {
+    const joyX = 100, joyY = this.scale.height - 130;
+    const baseRadius = 52;
+    this.joyCenter = { x: joyX, y: joyY };
+    this.joyMaxDist = baseRadius - 14;
+
+    // 底盘(半透明圆环)
+    this.joyBase = this.add.circle(joyX, joyY, baseRadius, 0x000000, 0.3)
+      .setStrokeStyle(2, 0xc9b072, 0.5)
+      .setScrollFactor(0)
+      .setDepth(1000);
+
+    // 摇杆头
+    this.joyThumb = this.add.circle(joyX, joyY, 20, 0xc9b072, 0.55)
+      .setStrokeStyle(2, 0xe8d9a0, 0.8)
+      .setScrollFactor(0)
+      .setDepth(1001);
+
+    // 方向指示线(十字准星)
+    const crossH = this.add.rectangle(joyX, joyY, baseRadius * 2, 1, 0xc9b072, 0.2).setScrollFactor(0).setDepth(999);
+    const crossV = this.add.rectangle(joyX, joyY, 1, baseRadius * 2, 0xc9b072, 0.2).setScrollFactor(0).setDepth(999);
+
+    // 触摸区域
+    const hitArea = this.add.zone(joyX, joyY, baseRadius * 2.5, baseRadius * 2.5)
+      .setScrollFactor(0).setDepth(1002).setInteractive();
+
+    hitArea.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      this.joyActive = true;
+      this.joyPointerId = p.id;
+      this.updateJoystick(p);
+    });
+
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      if (this.joyActive && p.id === this.joyPointerId) {
+        this.updateJoystick(p);
+      }
+    });
+
+    this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (p.id === this.joyPointerId) {
+        this.joyActive = false;
+        this.joyPointerId = -1;
+        this.joyThumb.setPosition(this.joyCenter.x, this.joyCenter.y);
+        this.joyDir = { x: 0, y: 0 };
+      }
+    });
+  }
+
+  private updateJoystick(pointer: Phaser.Input.Pointer) {
+    const dx = pointer.x - this.joyCenter.x;
+    const dy = pointer.y - this.joyCenter.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < 8) {
+      this.joyThumb.setPosition(this.joyCenter.x, this.joyCenter.y);
+      this.joyDir = { x: 0, y: 0 };
+      return;
+    }
+
+    const angle = Math.atan2(dy, dx);
+    const clamped = Math.min(dist, this.joyMaxDist);
+    this.joyThumb.setPosition(
+      this.joyCenter.x + Math.cos(angle) * clamped,
+      this.joyCenter.y + Math.sin(angle) * clamped
+    );
+    this.joyDir = {
+      x: Math.cos(angle) * (clamped / this.joyMaxDist),
+      y: Math.sin(angle) * (clamped / this.joyMaxDist),
+    };
+  }
+
+  // ===== 攻击按钮(右下大红圆) =====
+  private createAttackButton() {
+    const btnX = this.scale.width - 100, btnY = this.scale.height - 130;
+    const r = 48;
+
+    this.btnAttack = this.add.circle(btnX, btnY, r, 0xcc2222, 0.7)
+      .setStrokeStyle(3, 0xff5555, 0.9)
+      .setScrollFactor(0).setDepth(1000)
+      .setInteractive({ useHandCursor: true });
+
+    // 文字"攻"
+    this.add.text(btnX, btnY, '攻', {
+      fontSize: '24px', color: '#ffffff', fontStyle: 'bold',
+      stroke: '#000000', strokeThickness: 2,
+    }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+    // 脉冲动画
+    this.tweens.add({
+      targets: this.btnAttack, scaleX: 1.05, scaleY: 1.05,
+      yoyo: true, repeat: -1, duration: 600,
+    });
+
+    this.btnAttack.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // 不跟摇杆抢同一个pointer
+      if (p.id === this.joyPointerId) return;
+      if (!this.paused) this.doBasicAttack();
+    });
+  }
+
+  // ===== 技能按钮(底部中央5个) =====
+  private createSkillButtons() {
+    const slots = 5;
+    const btnR = 22;
+    const gap = 10;
+    const totalW = slots * btnR * 2 + (slots - 1) * gap;
+    const startX = (this.scale.width - totalW) / 2 + btnR;
+    const btnY = this.scale.height - 50;
+
+    for (let i = 0; i < slots; i++) {
+      const x = startX + i * (btnR * 2 + gap);
+      const btn = this.add.circle(x, btnY, btnR, 0x000000, 0.55)
+        .setStrokeStyle(2, 0xc9b072, 0.6)
+        .setScrollFactor(0).setDepth(1000)
+        .setInteractive({ useHandCursor: true });
+
+      const label = this.add.text(x, btnY, '', {
+        fontSize: '11px', color: '#e8d9a0',
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
+
+      const idx = i;
+      btn.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        if (p.id === this.joyPointerId) return;
+        if (!this.paused) this.tryCastSkill(idx);
+      });
+
+      this.skillBtns.push(btn);
+      this.skillLabels.push(label);
+    }
+  }
+
+  // 刷新技能按钮文字
+  private refreshSkillButtons() {
+    const leader = GameContext.leader;
+    const skills = leader.skills.filter(s => s !== 'basic_attack').slice(0, 5);
+    for (let i = 0; i < 5; i++) {
+      const lbl = this.skillLabels[i];
+      const btn = this.skillBtns[i];
+      if (!lbl || !btn) continue;
+      if (i < skills.length) {
+        const sk = getSkill(skills[i]);
+        lbl.setText(sk.name.length > 2 ? sk.name.slice(0, 2) : sk.name);
+        lbl.setColor('#' + sk.effectColor.toString(16).padStart(6, '0'));
+        // 冷却遮罩
+        const cdKey = `${leader.id}:${sk.id}`;
+        const cdEnd = GameContext.skillCooldowns[cdKey] ?? 0;
+        if (this.time.now < cdEnd) {
+          btn.setAlpha(0.35);
+          lbl.setAlpha(0.5);
+        } else {
+          btn.setAlpha(1);
+          lbl.setAlpha(1);
+        }
+      } else {
+        lbl.setText('');
+        btn.setAlpha(0.3);
+      }
+    }
+  }
+
   // ===== 敌人 =====
   private spawnEnemies() {
     const m = this.map;
     if (m.encounters.length === 0) return;
-    // 初始散布若干敌人
     const count = m.id === 'yuzhou' ? 3 : 6;
     for (let i = 0; i < count; i++) this.spawnOneEnemy();
   }
@@ -220,7 +505,6 @@ export class WorldScene extends Phaser.Scene {
     };
     this.enemies.push(state);
 
-    // 血条
     const hpbar = this.add.rectangle(x, y - def.radius - 8, def.radius * 2, 4, 0x440000).setOrigin(0.5);
     const hpfill = this.add.rectangle(x, y - def.radius - 8, def.radius * 2, 4, 0xff5555).setOrigin(0.5);
     sprite.setData('hpbar', hpbar); sprite.setData('hpfill', hpfill);
@@ -235,26 +519,33 @@ export class WorldScene extends Phaser.Scene {
     this.updateHpBars();
     this.checkExits();
     this.checkEncounterSpawn(time);
-    this.updateSkillCooldowns(delta);
+    this.refreshSkillButtons();
   }
 
-  private handleMovement(delta: number) {
+  private handleMovement(_delta: number) {
     let vx = 0, vy = 0;
-    if (this.keys.A.isDown || this.cursors.left.isDown) vx -= 1;
-    if (this.keys.D.isDown || this.cursors.right.isDown) vx += 1;
-    if (this.keys.W.isDown || this.cursors.up.isDown) vy -= 1;
-    if (this.keys.S.isDown || this.cursors.down.isDown) vy += 1;
+
+    // 优先虚拟摇杆
+    if (this.joyActive && (this.joyDir.x !== 0 || this.joyDir.y !== 0)) {
+      vx = this.joyDir.x;
+      vy = this.joyDir.y;
+    } else {
+      // 键盘
+      if (this.keys.A.isDown || this.cursors.left.isDown) vx -= 1;
+      if (this.keys.D.isDown || this.cursors.right.isDown) vx += 1;
+      if (this.keys.W.isDown || this.cursors.up.isDown) vy -= 1;
+      if (this.keys.S.isDown || this.cursors.down.isDown) vy += 1;
+    }
+
     const len = Math.hypot(vx, vy) || 1;
     const leader = GameContext.leader;
     const spd = this.playerSpeed * (1 + (leader.spd - 10) * 0.01);
     this.player.setVelocity((vx / len) * spd, (vy / len) * spd);
 
-    // 朝向(用于攻击方向)
     if (vx !== 0 || vy !== 0) {
       this.player.setData('facing', { x: vx / len, y: vy / len });
     }
 
-    // 记录位置到 context
     GameContext.playerX = this.player.x;
     GameContext.playerY = this.player.y;
   }
@@ -276,18 +567,15 @@ export class WorldScene extends Phaser.Scene {
     const now = this.time.now;
     if (now < this.combatLockUntil) return;
     const leader = GameContext.leader;
-    // 技能栏:取已学技能中前 5 个(排除平A)
     const skills = leader.skills.filter(s => s !== 'basic_attack').slice(0, 5);
     if (slot >= skills.length) return;
     const skillId = skills[slot];
     const skill = getSkill(skillId);
 
-    // 冷却
     const cdKey = `${leader.id}:${skillId}`;
     const lastCd = GameContext.skillCooldowns[cdKey] ?? 0;
     if (now < lastCd) return;
 
-    // 消耗
     if (!this.consumeCost(leader, skill)) {
       this.toastUI('资源不足');
       return;
@@ -296,16 +584,13 @@ export class WorldScene extends Phaser.Scene {
     GameContext.skillCooldowns[cdKey] = now + skill.cooldown;
     this.combatLockUntil = now + skill.castTime;
 
-    // 朝向:鼠标方向,否则 facing
     const facing = this.getAimDirection();
 
     if (skill.range === 'self') {
       this.castSelfSkill(leader, skill);
     } else if (skill.range === 'all') {
-      // 全体:直接对所有敌人造成伤害(范围爆发)
       this.castAoeSkill(leader, skill);
     } else {
-      // 单体/投射物
       this.spawnProjectile(leader, skill, facing, this.player.x, this.player.y);
     }
     this.flashPlayer(skill.effectColor);
@@ -324,6 +609,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private getAimDirection(): { x: number; y: number } {
+    // 优先:摇杆方向(如果正在用摇杆但不移动,则用 facing)
+    if (this.joyActive && (this.joyDir.x !== 0 || this.joyDir.y !== 0)) {
+      return this.joyDir;
+    }
     const ptr = this.input.activePointer;
     const wx = this.cameras.main.scrollX + ptr.x;
     const wy = this.cameras.main.scrollY + ptr.y;
@@ -339,7 +628,6 @@ export class WorldScene extends Phaser.Scene {
       this.spawnHealFx(this.player.x, this.player.y, skill.effectColor, heal);
     }
     if (skill.buff) {
-      // 简化:临时记录到 sprite data(持续 8s)
       const buffs = (this.player.getData('buffs') as Record<string, number>) ?? {};
       for (const [k, v] of Object.entries(skill.buff)) buffs[k] = this.time.now + 8000;
       this.player.setData('buffs', buffs);
@@ -347,7 +635,6 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private castAoeSkill(member: PartyMember, skill: SkillDef) {
-    // 以玩家为中心的范围爆发
     const radius = 220;
     for (const e of this.enemies) {
       const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, e.sprite.x, e.sprite.y);
@@ -355,7 +642,6 @@ export class WorldScene extends Phaser.Scene {
         this.damageEnemy(e, member, skill, d);
       }
     }
-    // 视觉:范围圆
     const ring = this.add.circle(this.player.x, this.player.y, 10, skill.effectColor, 0.3);
     this.tweens.add({ targets: ring, radius: radius, alpha: 0, duration: 400, onComplete: () => ring.destroy() });
   }
@@ -388,12 +674,10 @@ export class WorldScene extends Phaser.Scene {
       const leader = GameContext.leader;
 
       if (dist < e.def.detectRange) {
-        // 朝玩家移动
         const dx = this.player.x - e.sprite.x, dy = this.player.y - e.sprite.y;
         const len = Math.hypot(dx, dy) || 1;
         const spd = 60 + e.def.spd * 6;
         if (e.def.ai === 'ranged') {
-          // 远程:保持距离
           if (dist > e.def.attackRange * 0.8) {
             e.sprite.setVelocity((dx / len) * spd, (dy / len) * spd);
           } else if (dist < e.def.attackRange * 0.4) {
@@ -401,27 +685,23 @@ export class WorldScene extends Phaser.Scene {
           } else {
             e.sprite.setVelocity(0, 0);
           }
-          // 远程攻击
           if (dist < e.def.attackRange && time - e.lastAttack > 1800) {
             e.lastAttack = time;
             this.enemyRangedAttack(e, leader);
           }
         } else if (e.def.ai === 'charger') {
-          // 冲锋:快速接近
           e.sprite.setVelocity((dx / len) * spd * 1.4, (dy / len) * spd * 1.4);
           if (dist < e.def.attackRange && time - e.lastAttack > 1200) {
             e.lastAttack = time;
             this.enemyMeleeAttack(e, leader);
           }
         } else if (e.def.ai === 'boss') {
-          // BOSS:移动 + 周期技能
           e.sprite.setVelocity((dx / len) * spd * 0.8, (dy / len) * spd * 0.8);
           if (dist < e.def.attackRange && time - e.lastAttack > 1500) {
             e.lastAttack = time;
             this.enemyBossAttack(e, leader);
           }
         } else {
-          // 近战
           e.sprite.setVelocity((dx / len) * spd, (dy / len) * spd);
           if (dist < e.def.attackRange && time - e.lastAttack > 1400) {
             e.lastAttack = time;
@@ -432,7 +712,6 @@ export class WorldScene extends Phaser.Scene {
         e.sprite.setVelocity(0, 0);
       }
 
-      // 受击闪烁
       if (e.hurtFlash > 0) {
         e.hurtFlash -= delta;
         e.sprite.setTint(0xffffff);
@@ -460,12 +739,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private enemyBossAttack(e: EnemyState, target: PartyMember) {
-    // BOSS 随机:普攻 / 全体技能
     const skills = e.def.skills.filter(s => s !== 'basic_attack');
     if (skills.length && Math.random() < 0.5) {
       const sid = skills[Math.floor(Math.random() * skills.length)];
       const skill = getSkill(sid);
-      // 全体技能:范围爆发
       const radius = 260;
       this.damagePlayer(target, Math.floor(e.def.atk * skill.power), skill.element ?? e.def.element);
       const ring = this.add.circle(e.sprite.x, e.sprite.y, 10, skill.effectColor, 0.4);
@@ -477,14 +754,13 @@ export class WorldScene extends Phaser.Scene {
   }
 
   // ===== 伤害结算 =====
-  private damageEnemy(e: EnemyState, member: PartyMember, skill: SkillDef, dist = 0) {
+  private damageEnemy(e: EnemyState, member: PartyMember, skill: SkillDef, _dist = 0) {
     let dmg = this.computePower(member, skill);
     const mult = skill.element ? elementMultiplier(skill.element, e.def.element) : 1;
     dmg = Math.floor(dmg * mult * (1 - e.def.def * 0.01));
     dmg = Math.max(1, dmg);
     e.hp -= dmg;
     e.hurtFlash = 120;
-    // 击退
     const dx = e.sprite.x - this.player.x, dy = e.sprite.y - this.player.y;
     const len = Math.hypot(dx, dy) || 1;
     e.sprite.x += (dx / len) * 6; e.sprite.y += (dy / len) * 6;
@@ -492,14 +768,12 @@ export class WorldScene extends Phaser.Scene {
     this.spawnDamageText(e.sprite.x, e.sprite.y - e.def.radius, dmg, mult > 1 ? 0xffd97a : 0xffffff, mult > 1);
     if (mult > 1) this.toastUI(`${ELEMENT_LABEL[skill.element!]}克${ELEMENT_LABEL[e.def.element]}!`);
 
-    // 吸血/治疗类
     if (skill.heal) {
       const heal = Math.floor(member.maxHp * skill.heal);
       member.hp = Math.min(member.maxHp, member.hp + heal);
     }
 
     if (e.hp <= 0) {
-      // 击杀奖励
       const exp = e.def.exp;
       const money = e.def.money;
       GameContext.money += money;
@@ -531,7 +805,6 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private onPlayerDown() {
-    // 简化:全员阵亡 -> 回城复活
     const anyAlive = GameContext.party.some(p => p.inParty && p.hp > 0);
     if (!anyAlive) {
       this.paused = true;
@@ -562,12 +835,10 @@ export class WorldScene extends Phaser.Scene {
       p.sprite.x += p.vx * delta / 1000;
       p.sprite.y += p.vy * delta / 1000;
       p.life -= delta;
-      // 出界/超时
       if (p.life <= 0 || p.sprite.x < 0 || p.sprite.y < 0 ||
           p.sprite.x > this.map.width * TS || p.sprite.y > this.map.height * TS) {
         toRemove.push(p); continue;
       }
-      // 撞墙
       const tx = Math.floor(p.sprite.x / TS), ty = Math.floor(p.sprite.y / TS);
       if (this.map.tiles[ty]?.[tx] === 1) { toRemove.push(p); continue; }
 
@@ -615,7 +886,7 @@ export class WorldScene extends Phaser.Scene {
     this.tweens.add({ targets: ring, radius: 40, alpha: 0, duration: 500, onComplete: () => ring.destroy() });
   }
 
-  private emitSkillFx(skill: SkillDef, x: number, y: number, dir: { x: number; y: number }) {
+  private emitSkillFx(skill: SkillDef, x: number, y: number, _dir: { x: number; y: number }) {
     const ring = this.add.circle(x, y, 6, skill.effectColor, 0.5);
     this.tweens.add({ targets: ring, radius: 24, alpha: 0, duration: 250, onComplete: () => ring.destroy() });
   }
@@ -638,13 +909,8 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  private updateSkillCooldowns(delta: number) {
-    // 冷却由 GameContext.skillCooldowns 时间戳管理,UI 场景读取显示
-  }
-
   // ===== 遇敌刷新 =====
   private checkEncounterSpawn(time: number) {
-    // 保持地图敌人数量
     const target = this.map.id === 'yuzhou' ? 3 : 6;
     if (this.enemies.length < target && time > this.encounterCooldown) {
       this.spawnOneEnemy({ x: this.player.x, y: this.player.y });
@@ -675,13 +941,11 @@ export class WorldScene extends Phaser.Scene {
 
   // ===== 交互 =====
   private interactNearby() {
-    // 检查附近 NPC / 剧情点
     for (const npc of this.map.npcs) {
       if (Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.x, npc.y) < 40) {
         this.interactNPC(npc.id); return;
       }
     }
-    // 剧情点(tile=6)
     const TS = this.map.tilesize;
     const tx = Math.floor(this.player.x / TS), ty = Math.floor(this.player.y / TS);
     for (const node of Object.values(STORY)) {
@@ -696,7 +960,6 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private interactNPC(npcId: string) {
-    // 简单 NPC 对话
     if (npcId === 'npc_zhao' && !GameContext.hasFlag('appraised')) {
       this.triggerStory('ch1_zhao'); return;
     }
@@ -708,24 +971,19 @@ export class WorldScene extends Phaser.Scene {
     if (npcId === 'npc_qingwei' && GameContext.hasFlag('longkui_joined') && !GameContext.hasFlag('beat_tianyao')) {
       this.triggerStory('ch3_locktower'); return;
     }
-    // 蜀山掌门:击败天妖皇后引导去古藤林
     if (npcId === 'npc_qingwei' && GameContext.hasFlag('beat_tianyao') && !GameContext.hasFlag('learn_feilong')) {
       this.runCustomDialog('掌门清微', 0xe0e0e0,
         '天妖皇已除,甚好。然邪剑仙未灭,须寻五灵珠之力。古藤林中有异人精精,可传你飞龙探云手,速往!');
       return;
     }
-    // 古藤林精精
     if (npcId === 'npc_jingjing' && !GameContext.hasFlag('learn_feilong')) {
       this.triggerStory('ch4_gutenglin'); return;
     }
-    // 酆都冶炼师(商店)
     if (npcId === 'npc_yelian') { this.openShop('weapon'); return; }
-    // 酆都鬼卒
     if (npcId === 'npc_ghost') {
       this.runCustomDialog('鬼卒', 0x8888aa, '前方熔岩地狱,火鬼王凶悍,水灵之力方可克制。');
       return;
     }
-    // 默认闲聊
     const npc = this.map.npcs.find(n => n.id === npcId);
     if (npc) {
       this.runCustomDialog(npc.name, 0xc9b072, '江湖路远,少侠保重。');
@@ -741,16 +999,13 @@ export class WorldScene extends Phaser.Scene {
 
   private openShop(type: 'weapon' | 'potion') {
     this.paused = true;
-    this.scene.pause().launch('DialogScene', {
-      mode: 'shop', shopType: type,
-    });
+    this.scene.pause().launch('DialogScene', { mode: 'shop', shopType: type });
   }
 
   // ===== 剧情 =====
   private checkAutoStory() {
     const node = autoStoryFor(this.map.id);
     if (node && !GameContext.completedNodes.has(node.id)) {
-      // 检查前置条件
       if (node.condition && !GameContext.hasFlag(node.condition)) return;
       this.triggerStory(node.id);
     }
@@ -766,7 +1021,6 @@ export class WorldScene extends Phaser.Scene {
     this.scene.pause().launch('DialogScene', { mode: 'story', nodeId: node.id });
   }
 
-  // ===== 切换角色 =====
   private switchMember() {
     const party = GameContext.party.filter(p => p.inParty && p.hp > 0);
     if (party.length <= 1) return;
@@ -776,7 +1030,6 @@ export class WorldScene extends Phaser.Scene {
     this.toastUI(`操控:${m.name}【${ELEMENT_LABEL[m.element]}】`);
   }
 
-  // ===== 暂停菜单 =====
   private openPauseMenu() {
     this.paused = true;
     this.scene.pause().launch('DialogScene', { mode: 'pause' });
@@ -786,7 +1039,6 @@ export class WorldScene extends Phaser.Scene {
     GameContext.autosave();
   }
 
-  // ===== UI 反馈 =====
   private toastUI(msg: string) {
     this.events.emit('ui-toast', msg);
   }
@@ -799,7 +1051,6 @@ export class WorldScene extends Phaser.Scene {
     this.tweens.add({ targets: t, alpha: 1, duration: 400, hold: 1500, yoyo: true, onComplete: () => t.destroy() });
   }
 
-  // 供 DialogScene 回调
   handleStoryComplete(nodeId: string) {
     const node = getStoryNode(nodeId);
     GameContext.completeNode(node.id);
@@ -815,11 +1066,9 @@ export class WorldScene extends Phaser.Scene {
     if (node.id === 'ch2_shushan') {
       GameContext.joinParty('longkui', GameContext.leader.level);
     }
-    // 第4章酆都:紫萱加入
     if (node.id === 'ch4_fengdu') {
       GameContext.joinParty('zixuan', GameContext.leader.level);
     }
-    // 第5章冰风谷:雪见归魂加入;长卿同行
     if (node.id === 'ch5_bingfenggu') {
       GameContext.joinParty('xuejian', GameContext.leader.level);
       GameContext.joinParty('changqing', GameContext.leader.level);
