@@ -116,12 +116,15 @@ export class MobileControls {
     this.joystickBase.on('pointerdown', (e: any) => {
       this.joystickActive = true;
       this.joystickTouchId = e.pointerId ?? 0;
-      this.updateJoystick(e.global.x, e.global.y);
+      // e.global 是画布坐标，需转为 stage 局部坐标（横屏逻辑空间）
+      const p = this.api.toStageLocal(e.global.x, e.global.y);
+      this.updateJoystick(p.x, p.y);
     });
     // 使用全局 pointermove
     this.api.app.stage.on('pointermove', (e: any) => {
       if (!this.joystickActive) return;
-      this.updateJoystick(e.global.x, e.global.y);
+      const p = this.api.toStageLocal(e.global.x, e.global.y);
+      this.updateJoystick(p.x, p.y);
     });
     this.api.app.stage.on('pointerup', () => {
       if (this.joystickActive) {

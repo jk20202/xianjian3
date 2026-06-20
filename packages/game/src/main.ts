@@ -28,6 +28,9 @@ async function main(): Promise<void> {
   // 初始化 UI
   const ui = new UIManager(api, scene);
 
+  // 设置坐标变换（竖屏旋转时将 clientX/clientY 转为 stage 局部坐标）
+  input.setCoordinateTransform(api.toStageLocal);
+
   // 初始化手机控制
   const mobile = new MobileControls(api, input);
   const mobileMode = isMobile();
