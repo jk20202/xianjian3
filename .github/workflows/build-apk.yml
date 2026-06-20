@@ -59,7 +59,7 @@ jobs:
 
       - name: Build Debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon -x lintV8AnalyzeRelease -x lint
+        run: ./gradlew assembleDebug --no-daemon -x lintAnalyzeRelease -x lint -x lintAnalyzeDebug
 
       - name: Rename APK
         run: |
