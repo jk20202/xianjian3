@@ -51,13 +51,24 @@ export async function createEngine(canvas?: HTMLCanvasElement): Promise<EngineAp
     document.body.appendChild(app.canvas);
   }
 
+  // 舞台事件模式 + 排序，保证子节点能接收交互事件
+  app.stage.eventMode = 'static';
+  app.stage.sortableChildren = true;
+
   const world = new Container();
   world.sortableChildren = true;
+  world.eventMode = 'static';
   const ui = new Container();
   ui.sortableChildren = true;
+  ui.eventMode = 'static';
   app.stage.addChild(world, ui);
 
-  const screen = () => ({ width: app.screen.width, height: app.screen.height });
+  // 实时屏幕尺寸对象，resize 时自动更新，避免 UI 使用过期尺寸
+  const screenObj = { width: app.screen.width, height: app.screen.height };
+  app.renderer.on('resize', () => {
+    screenObj.width = app.screen.width;
+    screenObj.height = app.screen.height;
+  });
 
   return {
     app,
@@ -77,11 +88,10 @@ export async function createEngine(canvas?: HTMLCanvasElement): Promise<EngineAp
         },
       } as any),
     centerCameraOn: (pos) => {
-      const s = screen();
-      world.x = s.width / 2 - pos.x;
-      world.y = s.height / 2 - pos.y;
+      world.x = screenObj.width / 2 - pos.x;
+      world.y = screenObj.height / 2 - pos.y;
     },
-    screen: screen() as { width: number; height: number },
+    screen: screenObj,
     destroy: () => app.destroy(true),
   };
 }
@@ -89,9 +99,8 @@ export async function createEngine(canvas?: HTMLCanvasElement): Promise<EngineAp
 /** 引擎尺寸变化时刷新缓存（供 UI 重排） */
 export function watchResize(api: EngineApi, onResize: (w: number, h: number) => void): () => void {
   const handler = () => {
-    api.screen.width = window.innerWidth;
-    api.screen.height = window.innerHeight;
-    onResize(window.innerWidth, window.innerHeight);
+    // api.screen 已由 renderer 的 resize 事件实时更新，这里只触发回调
+    onResize(api.screen.width, api.screen.height);
   };
   window.addEventListener('resize', handler);
   return () => window.removeEventListener('resize', handler);

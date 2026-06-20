@@ -1,7 +1,7 @@
 // main.ts
 // 游戏入口：初始化 PixiJS、输入、场景、UI，启动游戏循环
 
-import { createEngine } from './core/engine';
+import { createEngine, watchResize } from './core/engine';
 import type { EngineApi } from './core/engine';
 import { InputManager } from './core/input';
 import { World } from './ecs/world';
@@ -29,6 +29,12 @@ async function main(): Promise<void> {
   // 初始化 UI
   const ui = new UIManager(api, scene);
 
+  // 监听窗口尺寸变化，确保 screen 实时更新（renderer 已自动更新 screenObj，
+  // 这里注册回调以便将来扩展 UI 重排逻辑）
+  watchResize(api, () => {
+    // UI 重排可在此触发，当前由 ui.update() 每帧读取 api.screen 自动适配
+  });
+
   // 游戏循环
   let lastTime = performance.now();
   const FIXED_DT = 1000 / 60; // 60Hz 逻辑
@@ -44,7 +50,7 @@ async function main(): Promise<void> {
 
     if (screen === 'game') {
       // 处理输入
-      handleGameInput(input, scene, ui);
+      handleGameInput(api, input, scene, ui);
 
       // 更新场景（含战斗、AI、移动）
       scene.update(elapsed);
@@ -52,7 +58,9 @@ async function main(): Promise<void> {
       // 更新 UI
       ui.update();
     } else if (screen === 'title') {
-      // 标题界面：只更新 UI
+      // 标题界面：处理键盘输入（Enter/Space/J 开始新游戏）
+      ui.handleTitleInput(input.state);
+      // 更新 UI
       ui.update();
     }
 
@@ -66,7 +74,7 @@ async function main(): Promise<void> {
 }
 
 /** 处理游戏中的输入 */
-function handleGameInput(input: InputManager, scene: SceneManager, ui: UIManager): void {
+function handleGameInput(api: EngineApi, input: InputManager, scene: SceneManager, ui: UIManager): void {
   const state = input.state;
   const player = scene.getPlayer();
   if (!player) return;
@@ -105,13 +113,23 @@ function handleGameInput(input: InputManager, scene: SceneManager, ui: UIManager
     return;
   }
 
+  // 鼠标点击：屏幕坐标转世界坐标，优先检测 NPC 交互，否则设为移动目标
+  if (state.mouseClicked) {
+    const worldX = state.mousePos.x - api.world.x;
+    const worldY = state.mousePos.y - api.world.y;
+    // 先尝试点击 NPC 交互，未命中则设为移动目标
+    if (!scene.tryInteractAtNpc({ x: worldX, y: worldY })) {
+      scene.setClickTarget({ x: worldX, y: worldY });
+    }
+  }
+
   // 交互
   if (state.interact) {
     scene.interactWithNpc();
     return;
   }
 
-  // 移动
+  // 移动（键盘输入）
   const moveSpeed = player.speed;
   if (state.move.x !== 0 || state.move.y !== 0) {
     player.velocity.x = state.move.x * moveSpeed;
@@ -121,6 +139,7 @@ function handleGameInput(input: InputManager, scene: SceneManager, ui: UIManager
       player.facing = Math.atan2(state.move.y, state.move.x);
     }
   } else {
+    // 无键盘输入时清零 velocity，SceneManager 的点击移动逻辑会在有点击目标时覆盖
     player.velocity.x = 0;
     player.velocity.y = 0;
   }

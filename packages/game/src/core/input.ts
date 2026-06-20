@@ -1,6 +1,8 @@
 // core/input.ts
-// 输入系统：键盘 + 虚拟摇杆（移动端）。
+// 输入系统：键盘 + 鼠标 + 虚拟摇杆（移动端）。
 // 把原始按键事件抽象成"意图"，战斗/移动模块只读意图，三端共用。
+
+import type { Vec2 } from './types';
 
 export interface InputState {
   /** 移动意图向量（归一化），x/y ∈ [-1,1] */
@@ -19,6 +21,10 @@ export interface InputState {
   confirm: boolean;
   /** 交互（拾取/对话） */
   interact: boolean;
+  /** 鼠标位置（屏幕坐标） */
+  mousePos: Vec2;
+  /** 鼠标点击（本帧边沿触发） */
+  mouseClicked: boolean;
 }
 
 export class InputManager {
@@ -33,7 +39,14 @@ export class InputManager {
     menuToggle: false,
     confirm: false,
     interact: false,
+    mousePos: { x: 0, y: 0 },
+    mouseClicked: false,
   };
+
+  // 鼠标位置（屏幕坐标），由事件实时更新
+  mousePos: Vec2 = { x: 0, y: 0 };
+  // 鼠标点击标记，每帧消费一次
+  private mouseDownThisFrame = false;
 
   // 虚拟摇杆（移动端），由 UI 层设置
   virtualMove: { x: number; y: number } = { x: 0, y: 0 };
@@ -41,6 +54,8 @@ export class InputManager {
 
   private boundDown: (e: KeyboardEvent) => void;
   private boundUp: (e: KeyboardEvent) => void;
+  private boundMouseMove: (e: MouseEvent) => void;
+  private boundMouseDown: (e: MouseEvent) => void;
 
   constructor() {
     this.boundDown = (e) => {
@@ -55,8 +70,17 @@ export class InputManager {
     this.boundUp = (e) => {
       this.keys.delete(e.key.toLowerCase());
     };
+    this.boundMouseMove = (e) => {
+      this.mousePos.x = e.clientX;
+      this.mousePos.y = e.clientY;
+    };
+    this.boundMouseDown = () => {
+      this.mouseDownThisFrame = true;
+    };
     window.addEventListener('keydown', this.boundDown);
     window.addEventListener('keyup', this.boundUp);
+    window.addEventListener('mousemove', this.boundMouseMove);
+    window.addEventListener('mousedown', this.boundMouseDown);
   }
 
   /** 每帧开头调用：把本帧边沿事件压入 state */
@@ -97,11 +121,17 @@ export class InputManager {
     this.state.menuToggle = this.pressedThisFrame.has('tab') || this.pressedThisFrame.has('escape');
     this.state.confirm = this.pressedThisFrame.has('e') || this.pressedThisFrame.has('enter') || this.pressedThisFrame.has(' ');
     this.state.interact = this.pressedThisFrame.has('e') || this.pressedThisFrame.has('f');
+
+    // 鼠标位置 + 点击边沿
+    this.state.mousePos.x = this.mousePos.x;
+    this.state.mousePos.y = this.mousePos.y;
+    this.state.mouseClicked = this.mouseDownThisFrame;
   }
 
   /** 每帧结尾调用：清空边沿事件 */
   endFrame(): void {
     this.pressedThisFrame.clear();
+    this.mouseDownThisFrame = false;
   }
 
   /** 虚拟按键（移动端 UI 调用） */
@@ -122,5 +152,7 @@ export class InputManager {
   destroy(): void {
     window.removeEventListener('keydown', this.boundDown);
     window.removeEventListener('keyup', this.boundUp);
+    window.removeEventListener('mousemove', this.boundMouseMove);
+    window.removeEventListener('mousedown', this.boundMouseDown);
   }
 }

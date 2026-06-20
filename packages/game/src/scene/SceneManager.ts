@@ -22,6 +22,7 @@ import { CHARACTER_MAP } from '../data/characters';
 import { statsAtLevel } from '../data/stats';
 import { ITEM_MAP } from '../data/items';
 import { addStats } from '../data/stats';
+import { ELEMENT_COLOR } from '../data/element';
 import { Graphics, Container, Text } from 'pixi.js';
 
 /** 瓦片颜色 */
@@ -34,6 +35,19 @@ const TILE_COLORS: Record<number, number> = {
   5: 0x5a5a4a,  // 道路
   6: 0x8a7a5a,  // 桥
 };
+
+/** 调整颜色亮度（factor > 1 变亮，< 1 变暗） */
+function adjustBrightness(color: number, factor: number): number {
+  const r = Math.min(255, Math.round(((color >> 16) & 0xff) * factor));
+  const g = Math.min(255, Math.round(((color >> 8) & 0xff) * factor));
+  const b = Math.min(255, Math.round((color & 0xff) * factor));
+  return (r << 16) | (g << 8) | b;
+}
+
+/** 基于瓦片坐标的确定性随机数（0-255），用于纹理变化 */
+function tileVariation(x: number, y: number): number {
+  return ((x * 73856093) ^ (y * 19349663)) & 0xff;
+}
 
 /** 游戏状态（运行时，非存档） */
 export interface GameRunState {
@@ -51,9 +65,17 @@ export class SceneManager {
   private world: World;
   private combat: CombatSystem;
   private mapGraphics: Graphics | null = null;
-  private entityGraphics = new Map<string, Container>();
+  /** 实体图形引用：container 主体容器，hpBar 血条，body 身体，direction 方向指示器 */
+  private entityGraphics = new Map<string, {
+    container: Container;
+    hpBar: Graphics;
+    body: Graphics;
+    direction: Graphics;
+  }>();
   private currentMapDef: MapDef | null = null;
   private player: Entity | null = null;
+  /** 点击移动目标（世界坐标），null 表示无目标 */
+  private clickTarget: Vec2 | null = null;
   /** 游戏运行时状态 */
   runState: GameRunState;
   /** 是否暂停（对话/菜单时） */
@@ -251,27 +273,127 @@ export class SceneManager {
   private renderMap(mapDef: MapDef): void {
     const g = new Graphics();
     const ts = mapDef.tileSize;
+
     for (let y = 0; y < mapDef.height; y++) {
       for (let x = 0; x < mapDef.width; x++) {
         const tile = mapDef.tiles[y][x];
-        const color = TILE_COLORS[tile] ?? 0x3a3a4a;
-        g.rect(x * ts, y * ts, ts, ts).fill(color);
-        // 墙边框
-        if (tile === 1) {
-          g.rect(x * ts, y * ts, ts, ts).stroke({ width: 1, color: 0x1a1a2a });
+        const px = x * ts;
+        const py = y * ts;
+        // 确定性纹理变化
+        const v = tileVariation(x, y);
+        const brightness = 0.9 + (v / 255) * 0.2; // 0.9 ~ 1.1
+        const baseColor = TILE_COLORS[tile] ?? 0x3a3a4a;
+
+        switch (tile) {
+          case 0: {
+            // 空地（石板地）：带细微裂纹
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
+            if (v % 3 === 0) {
+              g.moveTo(px + ts * 0.2, py + ts * 0.3).lineTo(px + ts * 0.5, py + ts * 0.6)
+                .stroke({ width: 1, color: 0x2a2a3a, alpha: 0.3 });
+            }
+            break;
+          }
+          case 1: {
+            // 墙：高度感（底部暗、顶部亮、边框）
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness * 0.7) });
+            g.rect(px, py, ts, ts * 0.35).fill({ color: adjustBrightness(baseColor, brightness * 1.15) });
+            g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x1a1a2a });
+            // 顶部高光
+            g.rect(px, py, ts, 2).fill({ color: 0x4a4a5a, alpha: 0.6 });
+            break;
+          }
+          case 2: {
+            // 草地：带草叶纹理
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
+            const bladeColor = adjustBrightness(baseColor, brightness * 1.3);
+            if (v % 2 === 0) {
+              g.moveTo(px + ts * 0.3, py + ts * 0.7).lineTo(px + ts * 0.35, py + ts * 0.5)
+                .stroke({ width: 1, color: bladeColor });
+            }
+            if (v % 3 === 1) {
+              g.moveTo(px + ts * 0.6, py + ts * 0.8).lineTo(px + ts * 0.65, py + ts * 0.6)
+                .stroke({ width: 1, color: bladeColor });
+            }
+            break;
+          }
+          case 3: {
+            // 水：深蓝底 + 浅色波纹高光
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
+            const highlight = adjustBrightness(baseColor, brightness * 1.4);
+            g.ellipse(px + ts * 0.3, py + ts * 0.4, ts * 0.15, ts * 0.06).fill({ color: highlight, alpha: 0.5 });
+            if (v % 2 === 0) {
+              g.ellipse(px + ts * 0.7, py + ts * 0.7, ts * 0.12, ts * 0.05).fill({ color: highlight, alpha: 0.4 });
+            }
+            break;
+          }
+          case 4: {
+            // 树：地面 + 棕色树干 + 绿色树冠
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(0x2a4a2a, brightness) });
+            // 树干
+            g.rect(px + ts * 0.42, py + ts * 0.45, ts * 0.16, ts * 0.45).fill({ color: 0x6b4226 });
+            g.rect(px + ts * 0.42, py + ts * 0.45, ts * 0.16, ts * 0.45).stroke({ width: 1, color: 0x3a2210, alpha: 0.6 });
+            // 树冠（多层圆模拟立体感）
+            const canopyColor = adjustBrightness(0x2d5a1f, brightness);
+            g.circle(px + ts * 0.5, py + ts * 0.35, ts * 0.38).fill({ color: canopyColor });
+            g.circle(px + ts * 0.5, py + ts * 0.35, ts * 0.38).stroke({ width: 1, color: 0x1a3a0f, alpha: 0.7 });
+            // 树冠高光
+            g.circle(px + ts * 0.4, py + ts * 0.25, ts * 0.12).fill({ color: adjustBrightness(canopyColor, 1.2), alpha: 0.6 });
+            break;
+          }
+          case 5: {
+            // 道路：略带边框的石路
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
+            g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x4a4a3a, alpha: 0.4 });
+            break;
+          }
+          case 6: {
+            // 桥：木板 + 横向板缝
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
+            g.moveTo(px, py + ts * 0.33).lineTo(px + ts, py + ts * 0.33)
+              .stroke({ width: 1, color: 0x6a5a3a, alpha: 0.7 });
+            g.moveTo(px, py + ts * 0.66).lineTo(px + ts, py + ts * 0.66)
+              .stroke({ width: 1, color: 0x6a5a3a, alpha: 0.7 });
+            g.rect(px, py, ts, ts).stroke({ width: 1, color: 0x5a4a2a, alpha: 0.5 });
+            break;
+          }
+          default: {
+            g.rect(px, py, ts, ts).fill({ color: adjustBrightness(baseColor, brightness) });
+            break;
+          }
         }
       }
     }
-    // 渲染出口标记
+
+    // 出口标记 —— 多层光晕传送门
     for (const exit of mapDef.exits) {
-      const ex = exit.x * ts;
-      const ey = exit.y * ts;
+      const cx = exit.x * ts + ts / 2;
+      const cy = exit.y * ts + ts / 2;
+      const portalColor = exit.locked ? 0xff3333 : 0x33ff66;
+      // 外层光晕
+      g.circle(cx, cy, ts * 0.7).fill({ color: portalColor, alpha: 0.1 });
+      g.circle(cx, cy, ts * 0.55).fill({ color: portalColor, alpha: 0.2 });
+      g.circle(cx, cy, ts * 0.4).fill({ color: portalColor, alpha: 0.35 });
+      g.circle(cx, cy, ts * 0.25).fill({ color: portalColor, alpha: 0.55 });
+      // 中心亮点
+      g.circle(cx, cy, ts * 0.1).fill({ color: 0xffffff, alpha: 0.85 });
+      // 锁定标记
       if (exit.locked) {
-        g.rect(ex, ey, ts, ts).fill({ color: 0x880000, alpha: 0.6 });
-      } else {
-        g.rect(ex, ey, ts, ts).fill({ color: 0x00ff00, alpha: 0.3 });
+        g.rect(cx - 2, cy - ts * 0.2, 4, ts * 0.3).fill({ color: 0x000000, alpha: 0.6 });
+        g.circle(cx, cy - ts * 0.2, 4).fill({ color: 0x000000, alpha: 0.6 });
       }
     }
+
+    // 极淡网格线（alpha 0.05）
+    for (let x = 0; x <= mapDef.width; x++) {
+      g.moveTo(x * ts, 0).lineTo(x * ts, mapDef.height * ts)
+        .stroke({ width: 1, color: 0xffffff, alpha: 0.05 });
+    }
+    for (let y = 0; y <= mapDef.height; y++) {
+      g.moveTo(0, y * ts).lineTo(mapDef.width * ts, y * ts)
+        .stroke({ width: 1, color: 0xffffff, alpha: 0.05 });
+    }
+
     this.api.world.addChild(g);
     this.mapGraphics = g;
   }
@@ -283,9 +405,9 @@ export class SceneManager {
       this.mapGraphics.destroy();
       this.mapGraphics = null;
     }
-    for (const [, container] of this.entityGraphics) {
-      this.api.world.removeChild(container);
-      container.destroy();
+    for (const [, gfx] of this.entityGraphics) {
+      this.api.world.removeChild(gfx.container);
+      gfx.container.destroy();
     }
     this.entityGraphics.clear();
   }
@@ -300,53 +422,100 @@ export class SceneManager {
   /** 渲染单个实体 */
   private renderEntity(entity: Entity): void {
     if (this.entityGraphics.has(entity.id)) return;
+
     const container = new Container();
-    const g = new Graphics();
-    const sprite = entity.sprite;
-    const color = sprite.color;
-    const size = sprite.size;
+    const size = entity.sprite.size;
+    const elementColor = ELEMENT_COLOR[entity.element] ?? 0xffffff;
+    const skinColor = 0xffdab9; // 肤色
 
-    switch (sprite.shape) {
-      case 'circle':
-        g.circle(0, 0, size / 2).fill(color);
-        break;
-      case 'rect':
-        g.rect(-size / 2, -size / 2, size, size).fill(color);
-        break;
-      case 'triangle':
-        g.moveTo(0, -size / 2).lineTo(size / 2, size / 2).lineTo(-size / 2, size / 2).closePath().fill(color);
-        break;
-      case 'diamond':
-        g.moveTo(0, -size / 2).lineTo(size / 2, 0).lineTo(0, size / 2).lineTo(-size / 2, 0).closePath().fill(color);
-        break;
+    // === 阴影 ===
+    const shadowG = new Graphics();
+    shadowG.ellipse(0, size * 0.4, size * 0.5, size * 0.18).fill({ color: 0x000000, alpha: 0.35 });
+    container.addChild(shadowG);
+
+    // === 主体 ===
+    const bodyG = new Graphics();
+
+    if (entity.type === 'player' || entity.type === 'teammate') {
+      // 角色：身体 + 头 + 头发 + 武器 + 眼睛
+      const bodyColor = entity.sprite.color;
+      // 身体（圆角矩形）
+      bodyG.roundRect(-size * 0.3, -size * 0.1, size * 0.6, size * 0.5, 4).fill(bodyColor);
+      bodyG.roundRect(-size * 0.3, -size * 0.1, size * 0.6, size * 0.5, 4).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+      // 头部
+      bodyG.circle(0, -size * 0.3, size * 0.22).fill(skinColor);
+      bodyG.circle(0, -size * 0.3, size * 0.22).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+      // 头发（元素色）
+      bodyG.circle(0, -size * 0.38, size * 0.14).fill(elementColor);
+      // 武器（元素色发光长条）
+      bodyG.rect(size * 0.3, -size * 0.2, 3, size * 0.4).fill(elementColor);
+      bodyG.rect(size * 0.3, -size * 0.2, 3, size * 0.4).stroke({ width: 1, color: 0xffffff, alpha: 0.5 });
+      // 眼睛
+      bodyG.circle(-size * 0.07, -size * 0.3, 1.5).fill(0x000000);
+      bodyG.circle(size * 0.07, -size * 0.3, 1.5).fill(0x000000);
+    } else if (entity.type === 'monster') {
+      // 怪物：身体 + 眼睛 + 嘴
+      const bodyColor = entity.sprite.color;
+      // 身体（圆形）
+      bodyG.circle(0, 0, size * 0.4).fill(bodyColor);
+      bodyG.circle(0, 0, size * 0.4).stroke({ width: 2, color: 0x000000, alpha: 0.5 });
+      // 眼白
+      bodyG.circle(-size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
+      bodyG.circle(size * 0.12, -size * 0.08, size * 0.09).fill(0xffffff);
+      // 瞳孔（元素色）
+      bodyG.circle(-size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
+      bodyG.circle(size * 0.12, -size * 0.08, size * 0.045).fill(elementColor);
+      // 嘴/獠牙
+      bodyG.moveTo(-size * 0.1, size * 0.12).lineTo(0, size * 0.22).lineTo(size * 0.1, size * 0.12)
+        .stroke({ width: 1, color: 0x000000 });
+    } else if (entity.type === 'npc') {
+      // NPC：身体 + 头 + 眼睛 + 感叹号标记
+      const bodyColor = 0x8a8a9a;
+      // 身体
+      bodyG.roundRect(-size * 0.25, -size * 0.1, size * 0.5, size * 0.5, 4).fill(bodyColor);
+      bodyG.roundRect(-size * 0.25, -size * 0.1, size * 0.5, size * 0.5, 4).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+      // 头部
+      bodyG.circle(0, -size * 0.3, size * 0.2).fill(skinColor);
+      bodyG.circle(0, -size * 0.3, size * 0.2).stroke({ width: 1, color: 0x000000, alpha: 0.4 });
+      // 眼睛
+      bodyG.circle(-size * 0.06, -size * 0.32, 1.5).fill(0x000000);
+      bodyG.circle(size * 0.06, -size * 0.32, 1.5).fill(0x000000);
+      // 感叹号（任务标记）
+      bodyG.rect(-1.5, -size * 0.65, 3, size * 0.18).fill(0xffdd00);
+      bodyG.circle(0, -size * 0.7, 2.5).fill(0xffdd00);
+    } else if (entity.type === 'projectile') {
+      // 投射物：拖尾 + 发光球
+      bodyG.circle(-size * 0.5, 0, size * 0.2).fill({ color: elementColor, alpha: 0.2 });
+      bodyG.circle(-size * 0.3, 0, size * 0.3).fill({ color: elementColor, alpha: 0.4 });
+      bodyG.circle(0, 0, size * 0.5).fill({ color: elementColor, alpha: 0.6 });
+      bodyG.circle(0, 0, size * 0.3).fill(0xffffff);
     }
-    // 边框
-    g.stroke({ width: 2, color: 0x000000, alpha: 0.5 });
-    container.addChild(g);
+    container.addChild(bodyG);
 
-    // 名字标签
+    // === 方向指示器（小三角，朝向 facing） ===
+    const dirG = new Graphics();
+    dirG.moveTo(size * 0.55, 0).lineTo(size * 0.4, -size * 0.1).lineTo(size * 0.4, size * 0.1).closePath()
+      .fill({ color: elementColor, alpha: 0.8 });
+    container.addChild(dirG);
+
+    // === 血条 ===
+    const hpBar = new Graphics();
+    container.addChild(hpBar);
+
+    // === 名字标签 ===
     const label = new Text({
       text: entity.name,
       style: { fontSize: 10, fill: 0xffffff },
     });
-    label.anchor.set(0.5, -0.5);
-    label.y = size / 2 + 2;
+    label.anchor.set(0.5, 0);
+    label.y = size * 0.5 + 4;
     container.addChild(label);
-
-    // 血条（非 NPC）
-    if (entity.type !== 'npc' && entity.type !== 'projectile') {
-      const hpBar = new Graphics();
-      const barW = Math.max(size, 30);
-      hpBar.rect(-barW / 2, -size / 2 - 8, barW, 4).fill(0x330000);
-      hpBar.rect(-barW / 2, -size / 2 - 8, barW, 4).fill(0xff0000);
-      container.addChild(hpBar);
-    }
 
     container.x = entity.position.x;
     container.y = entity.position.y;
     container.zIndex = entity.position.y;
     this.api.world.addChild(container);
-    this.entityGraphics.set(entity.id, container);
+    this.entityGraphics.set(entity.id, { container, hpBar, body: bodyG, direction: dirG });
   }
 
   /** 每帧更新 */
@@ -387,7 +556,31 @@ export class SceneManager {
     if (dialogueManager.isActive || shopManager.isActive) return;
 
     const dtSec = dt / 1000;
-    // 移动由外部设置 velocity（通过 InputManager）
+
+    // 键盘输入优先：有键盘移动时清除点击目标
+    if (this.player.velocity.x !== 0 || this.player.velocity.y !== 0) {
+      this.clickTarget = null;
+    }
+
+    // 点击移动：朝目标点移动，到达后停止
+    if (this.clickTarget) {
+      const dx = this.clickTarget.x - this.player.position.x;
+      const dy = this.clickTarget.y - this.player.position.y;
+      const d = Math.hypot(dx, dy);
+      const stopRadius = 4; // 到达阈值（像素）
+      if (d <= stopRadius) {
+        this.player.velocity.x = 0;
+        this.player.velocity.y = 0;
+        this.clickTarget = null;
+      } else {
+        const moveSpeed = this.player.speed;
+        this.player.velocity.x = (dx / d) * moveSpeed;
+        this.player.velocity.y = (dy / d) * moveSpeed;
+        this.player.facing = Math.atan2(dy, dx);
+      }
+    }
+
+    // 移动由外部设置 velocity（通过 InputManager 或点击目标）
     // 这里只做位置更新 + 边界检测
     this.player.position.x += this.player.velocity.x * dtSec;
     this.player.position.y += this.player.velocity.y * dtSec;
@@ -416,27 +609,34 @@ export class SceneManager {
   /** 更新实体图形 */
   private updateEntityGraphics(): void {
     for (const entity of this.world.all()) {
-      let container = this.entityGraphics.get(entity.id);
-      if (!container) {
+      let gfx = this.entityGraphics.get(entity.id);
+      if (!gfx) {
         this.renderEntity(entity);
-        container = this.entityGraphics.get(entity.id);
-        if (!container) continue;
+        gfx = this.entityGraphics.get(entity.id);
+        if (!gfx) continue;
       }
-      container.x = entity.position.x;
-      container.y = entity.position.y;
-      container.zIndex = entity.position.y;
-      container.visible = entity.isAlive;
+      // 更新位置和可见性
+      gfx.container.x = entity.position.x;
+      gfx.container.y = entity.position.y;
+      gfx.container.zIndex = entity.position.y;
+      gfx.container.visible = entity.isAlive;
 
-      // 更新血条
-      if (entity.type !== 'npc' && entity.type !== 'projectile' && container.children.length >= 3) {
-        const hpBar = container.children[2] as Graphics;
-        hpBar.clear();
+      // 更新方向指示器朝向
+      gfx.direction.rotation = entity.facing;
+
+      // 更新血条（非 NPC/投射物）
+      if (entity.type !== 'npc' && entity.type !== 'projectile') {
+        gfx.hpBar.clear();
         const barW = Math.max(entity.sprite.size, 30);
-        const hpRatio = entity.hp / entity.maxHp;
-        hpBar.rect(-barW / 2, -entity.sprite.size / 2 - 8, barW, 4).fill(0x330000);
-        hpBar.rect(-barW / 2, -entity.sprite.size / 2 - 8, barW * hpRatio, 4).fill(
-          entity.faction === 'player' ? 0x00ff00 : 0xff0000,
-        );
+        const hpRatio = Math.max(0, Math.min(1, entity.hp / entity.maxHp));
+        const barY = -entity.sprite.size * 0.5 - 8;
+        // 背景
+        gfx.hpBar.roundRect(-barW / 2, barY, barW, 4, 2).fill({ color: 0x330000, alpha: 0.8 });
+        // 填充
+        const hpColor = entity.faction === 'player' ? 0x33ff33 : 0xff3333;
+        gfx.hpBar.roundRect(-barW / 2, barY, barW * hpRatio, 4, 2).fill(hpColor);
+        // 边框
+        gfx.hpBar.roundRect(-barW / 2, barY, barW, 4, 2).stroke({ width: 1, color: 0x000000, alpha: 0.5 });
       }
     }
   }
@@ -484,6 +684,51 @@ export class SceneManager {
         questManager.onTalk(nearest.npcId);
       }
     }
+  }
+
+  /** 设置鼠标点击移动目标（世界坐标） */
+  setClickTarget(pos: Vec2): void {
+    this.clickTarget = { x: pos.x, y: pos.y };
+  }
+
+  /** 清除点击移动目标 */
+  clearClickTarget(): void {
+    this.clickTarget = null;
+  }
+
+  /**
+   * 尝试与指定世界坐标处的 NPC 交互。
+   * @returns true 表示点中了 NPC 并开始对话，false 表示未点中
+   */
+  tryInteractAtNpc(pos: Vec2): boolean {
+    if (dialogueManager.isActive) return false;
+    const npcs = this.world.npcs();
+    const clickRadius = 24; // 点击命中半径
+    for (const npc of npcs) {
+      if (dist(pos, npc.position) <= clickRadius) {
+        if (npc.dialogueId) {
+          dialogueManager.start(npc.dialogueId);
+          if (npc.npcId) {
+            questManager.onTalk(npc.npcId);
+          }
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** 获取屏幕坐标处的 NPC（用于点击交互） */
+  getNpcAtScreenPos(screenPos: Vec2): Entity | null {
+    // 屏幕坐标转世界坐标
+    const worldX = screenPos.x - this.api.world.x;
+    const worldY = screenPos.y - this.api.world.y;
+    for (const npc of this.world.npcs()) {
+      if (dist({ x: worldX, y: worldY }, npc.position) < 30) {
+        return npc;
+      }
+    }
+    return null;
   }
 
   /** 处理怪物被击杀 */
@@ -679,5 +924,27 @@ export class SceneManager {
   /** 获取玩家实体 */
   getPlayer(): Entity | null {
     return this.player;
+  }
+
+  /** 检查玩家是否靠近 NPC（用于交互提示） */
+  isNearNpc(): boolean {
+    if (!this.player) return false;
+    const npcs = this.world.npcs();
+    for (const npc of npcs) {
+      if (dist(this.player.position, npc.position) < 50) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 获取当前地图像素尺寸（用于小地图） */
+  get mapPixelSize(): { width: number; height: number } | null {
+    if (!this.currentMapDef) return null;
+    const ts = this.currentMapDef.tileSize;
+    return {
+      width: this.currentMapDef.width * ts,
+      height: this.currentMapDef.height * ts,
+    };
   }
 }
